@@ -6,6 +6,7 @@ from pathlib import Path
 from jupyter_client import BlockingKernelClient
 from typing import Tuple
 from datetime import datetime
+import quaternion
 
 from matplotlib import pyplot as plt
 plt.style.use("seaborn-v0_8-whitegrid")
@@ -43,11 +44,6 @@ class Rapid(ABC):
             self._save_as_csv(data, **kwargs)
         return data, summary_info
 
-    @abstractmethod
-    def _post_process(self, data: pd.DataFrame) -> pd.DataFrame:
-        raise NotImplementedError("Child must override post_process")
-        return data
-
     def _read_data(self) -> pd.DataFrame:
         with open(self.filename.as_posix(), mode="r+b") as f:
             binary_data = f.read()
@@ -76,7 +72,12 @@ class Rapid(ABC):
             'date_deploy': date_deploy,
             'time_deploy': time_deploy
         }
-        
+
+    @abstractmethod
+    def _class_specific_config(self) -> Tuple[int, list[str]]:
+        """Provide summary interval and relevant fields."""
+        pass
+
     def check_unchanged_sensors(self, data: pd.DataFrame, threshold: int = 100) -> dict[str, bool]:
         """Check if any sensor data remains constant over a given threshold.
     
@@ -121,6 +122,60 @@ class Rapid(ABC):
         result = data.apply(compute_row, axis=1, result_type='expand')
         return pd.DataFrame(result.values, columns=['pres', 'sensors_used'])  
 
+    def count_threshold_exceedances(self, data: pd.DataFrame, column: str, threshold: float) -> int:
+        """Count exceedances of a specified threshold in the given column."""
+        filtered = data[(data[column] >= threshold)]
+        return filtered.shape[0]
+
+    def _post_process(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, dict[str, float]]:
+        """Common post-processing logic shared between subclasses."""
+        data["time"] = (data["time"] - data["time"].iloc[0]) / 1000
+        
+        if data["time"].max() >= 5000:
+            time_warning = "ERROR: Time series incorrect. Data cannot be used."
+        else:
+            time_warning = ""
+            
+        valid_sensors = self.check_unchanged_sensors(data)
+        pres_data = self.compute_pres(data, valid_sensors)
+        summary_interval, relevant_fields = self._class_specific_config()
+        
+        data.insert(1, "pres", pres_data['pres'])
+        data.insert(1, "accmag", np.linalg.norm(data[["accx", "accy", "accz"]], axis=-1))
+        data["accmag"] -= 9.81
+        data = data[relevant_fields]
+
+        summary_data = data.iloc[::summary_interval].reset_index(drop=True)
+        num_seconds = len(summary_data)//2
+        minutes, seconds = divmod(num_seconds, 60)
+        duration = f"{minutes:02}:{seconds:02}"
+
+        unchanged_sensors = [sensor for sensor, is_valid in valid_sensors.items() if not is_valid]
+        sensors_used_summary = pres_data['sensors_used'].unique()
+        sensors_used_summary_text = ', '.join(sensors_used_summary)
+
+        if unchanged_sensors:
+            warning_message = f"WARNING: Pressure data error ({', '.join(unchanged_sensors)}). Average taken from {sensors_used_summary_text}"
+        else:
+            warning_message = "All pressure sensors working"
+
+        if time_warning:
+            warning_message = time_warning + "; " + warning_message
+
+        summary_info = {
+            'duration[mm:ss]': duration,
+            'pres_min[mbar]': data['pres'].min(),
+            'pres_max[mbar]': data['pres'].max(),
+            'acc_max[g]': data['accmag'].max(),
+            '0.5s.acc>5': self.count_threshold_exceedances(summary_data, 'accmag', 5),
+            '0.5s.acc>10': self.count_threshold_exceedances(summary_data, 'accmag', 10),
+            '0.5s.acc>30': self.count_threshold_exceedances(summary_data, 'accmag', 30),
+            '0.5s.acc>50': self.count_threshold_exceedances(summary_data, 'accmag', 50),
+            'messages': warning_message
+        }
+
+        return data, summary_info
+
     def plot_data_overview(self, save: bool = True, show: bool = False) -> None:
         """Plots an overview for the generated data.
         This is primarily to spot problems before further user-processing.
@@ -160,39 +215,6 @@ class Rapid(ABC):
         if show == True:
             plt.show()
         plt.close()
-        
-    def plot_acc_mag_overview(self, save: bool = True, show: bool = False) -> None:
-        t = self.data["time"][::10]
-        
-        fig, ax1 = plt.subplots(figsize=(25, 5))
-        ax1.set_xlabel("time [s]")
-        
-        color = "C0"
-        ax1.set_ylabel("Acceleration magnitude [g]", color=color)
-        ax1.plot(t, self.data["accmag"].rolling(10).mean()[::10], color=color, label="Acceleration")
-        ax1.tick_params(axis='y', labelcolor=color)
-        ax1.ticklabel_format(useOffset=False)
-
-        ax2 = ax1.twinx()
-        color = "C1"
-        ax2.set_ylabel("Magnetic flux density [mT]", color=color)
-        ax2.plot(t, self.data["magx"].rolling(10).mean()[::10], color="C1", label="magx")
-        ax2.plot(t, self.data["magy"].rolling(10).mean()[::10], color="C2", label="magy")
-        ax2.plot(t, self.data["magz"].rolling(10).mean()[::10], color="C3", label="magz")
-        ax2.tick_params(axis='y', labelcolor=color)
-        
-        lines, labels = ax1.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax2.legend(lines + lines2, labels + labels2, loc='upper right')
-        
-        fig.tight_layout()
-
-        if save == True:
-            new_filename = self.filename.stem + "_acc_mag" 
-            plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
-        if show == True:
-            plt.show()
-        plt.close()   
         
     def plot_pressure_overview(self, save: bool = True, show: bool = False) -> None:
         """Plot individual raw values of P1, P2, and P3 to identify malfunctioning sensors."""
@@ -234,47 +256,40 @@ class Rapid(ABC):
             plt.show()
         plt.close() 
         
-    # def plot_acceleration_overview(self, save: bool = True, show: bool = False) -> None:
-    #     t = self.data["time"][::10]  # Downsampling for visualization
-    #     accmag = self.data["accmag"].rolling(10).mean()[::10]  # Rolling average for smoothing
-    # 
-    #     fig, ax = plt.subplots(figsize=(25, 5))
-    #     ax.set_xlabel("time [s]")
-    #     ax.set_ylabel("Acceleration magnitude [g]")
-    #     ax.plot(t, accmag, color="C1")
-    #     ax.tick_params(axis="y", labelcolor="C1")
-    #     fig.tight_layout()
-    # 
-    #     if save:
-    #         new_filename =  self.filename.stem + "_acc"
-    #         plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
-    #     if show:
-    #         plt.show()
-    #     plt.close()
-    #     
-    # def plot_magnetic_overview(self, save: bool = True, show: bool = False) -> None:
-    #     t = self.data["time"][::10]  # Downsampling for visualization
-    # 
-    #     fig, ax = plt.subplots(figsize=(25, 5))
-    #     ax.set_xlabel("time [s]")
-    #     ax.set_ylabel("Magnetic flux density [mT]")
-    #     
-    #     ax.plot(t, self.data["magx"].rolling(10).mean()[::10], color="C1", label="magx")
-    #     ax.plot(t, self.data["magy"].rolling(10).mean()[::10], color="C2", label="magy")
-    #     ax.plot(t, self.data["magz"].rolling(10).mean()[::10], color="C3", label="magz")
-    #     
-    #     ax.legend()
-    #     fig.tight_layout()
-    # 
-    #     if save:
-    #         new_filename = self.filename.stem + "_mag" 
-    #         plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
-    #     if show:
-    #         plt.show()
-    #     plt.close()
-    #     
- 
+    def plot_acc_mag_overview(self, save: bool = True, show: bool = False) -> None:
+        """Plot acceleration magnitude with magnetic flux for 100hz sensors."""
+        t = self.data["time"][::10]
+        
+        fig, ax1 = plt.subplots(figsize=(25, 5))
+        ax1.set_xlabel("time [s]")
+        
+        color = "C0"
+        ax1.set_ylabel("Acceleration magnitude [g]", color=color)
+        ax1.plot(t, self.data["accmag"].rolling(10).mean()[::10], color=color, label="Acceleration")
+        ax1.tick_params(axis='y', labelcolor=color)
+        ax1.ticklabel_format(useOffset=False)
 
+        ax2 = ax1.twinx()
+        color = "C1"
+        ax2.set_ylabel("Magnetic flux density [mT]", color=color)
+        ax2.plot(t, self.data["magx"].rolling(10).mean()[::10], color="C1", label="magx")
+        ax2.plot(t, self.data["magy"].rolling(10).mean()[::10], color="C2", label="magy")
+        ax2.plot(t, self.data["magz"].rolling(10).mean()[::10], color="C3", label="magz")
+        ax2.tick_params(axis='y', labelcolor=color)
+        
+        lines, labels = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax2.legend(lines + lines2, labels + labels2, loc='upper right')
+        
+        fig.tight_layout()
+
+        if save == True:
+            new_filename = self.filename.stem + "_acc_mag" 
+            plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
+        if show == True:
+            plt.show()
+        plt.close()   
+        
 class BDS100(Rapid):
     def __init__(self, filename: str, savecsv: bool = True, **kwargs) -> None:
         """This class processes BDS measurements at 100 Hz. 
@@ -298,108 +313,25 @@ class BDS100(Rapid):
         self.fmt = "HI22f4B"  # format string to set byteorder
         self.class_name = "100hz"
         self.column_names_raw = [
-            "sample rate",
-            "time",
-            "P1",
-            "T1",
-            "P2",
-            "T2",
-            "P3",
-            "T3",
-            "eul head",
-            "eul roll",
-            "eul pitch",
-            "quat w",
-            "quatx",
-            "quaty",
-            "quatz",
-            "magx",
-            "magy",
-            "magz",
-            "accx",
-            "accy",
-            "accz",
-            "gyrox",
-            "gyroy",
-            "gyroz",
-            "calmag",
-            "calacc",
-            "calgyro",
-            "calimu",
-        ]
+            "sample rate", "time", "P1", "T1", "P2", "T2", "P3", "T3", "eul head", "eul roll", "eul pitch", "quat w",
+            "quatx", "quaty", "quatz", "magx", "magy", "magz", "accx", "accy", "accz", "gyrox", "gyroy", "gyroz", "calmag",
+            "calacc", "calgyro", "calimu"]
         self.data, _ = super()._process_and_save(savecsv, **kwargs)
-
-    def _post_process(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, dict[str, float]]:
-        data["time"] = (data["time"] - data["time"].iloc[0]) / 1000
-        valid_sensors = self.check_unchanged_sensors(data)
-        pres_data = self.compute_pres(data, valid_sensors)
-        data.insert(1, "pres", pres_data['pres'])
-        data.insert(1, "accmag", np.linalg.norm(data[["accx", "accy", "accz"]], axis=-1))
-        data["accmag"] -= 9.81
-        data = data[
-            [
-                "time",
-                "pres",
-                "P1",
-                "P2",
-                "P3",
-                "accmag",
-                "magx",
-                "magy",
-                "magz",
-            ]
-        ]
         
-        #Creating summary data. Filtering data to 0.5s intervals could remove specific acceleration values
-        #Therefore the acceleration magnitude threshold counts are indicitive for preliminary analysis and require scruitinisation 
-        
-        if data["time"].max() >= 5000:
-          time_warning = "ERROR: Time series incorrect. Data cannot be used."
-        else:
-          time_warning = ""
-        
-        summary_data = data.iloc[::50].reset_index(drop=True) #filter 100hz to every 50 rows = 0.5s
-        num_seconds = len(summary_data)//2
-        minutes, seconds = divmod(num_seconds, 60)
-        duration = f"{minutes:02}:{seconds:02}"
-        #summary_csv_path = self.dir_csv / (self.filename.stem + "_summary.csv")
-        #summary_data.to_csv(summary_csv_path, index=False)
-
-        # Check for unchanged sensors
-        unchanged_sensors = [sensor for sensor, is_valid in valid_sensors.items() if not is_valid]
-        sensors_used_summary = pres_data['sensors_used'].unique()
-        sensors_used_summary_text = ', '.join(sensors_used_summary)
-        
-        if unchanged_sensors:
-          warning_message = f"WARNING: Pressure data error ({', '.join(unchanged_sensors)}). Average taken from {sensors_used_summary_text}"
-        else:
-          warning_message = "All pressure sensors working"
-        
-        if time_warning:
-          warning_message = time_warning + "; " + warning_message
-        
-        summary_info = {
-          'duration[mm:ss]':duration,
-          'pres_min[mbar]': data['pres'].min(),
-          'pres_max[mbar]': data['pres'].max(),
-          'acc_max[g]': data['accmag'].max(),
-          '0.5s.acc>5': self.count_threshold_exceedances(summary_data, 'accmag', 5),
-          '0.5s.acc>10': self.count_threshold_exceedances(summary_data, 'accmag', 10),
-          '0.5s.acc>30': self.count_threshold_exceedances(summary_data, 'accmag', 30),
-          '0.5s.acc>50': self.count_threshold_exceedances(summary_data, 'accmag', 50),
-          'messages': warning_message
-        }
-        
-        return data, summary_info
-      
-    def count_threshold_exceedances(self, data: pd.DataFrame, column: str, threshold: float) -> int:
-        """Count exceedances of a specified threshold in the given column."""
-        filtered = data[(data[column] >= threshold)]
-        return filtered.shape[0]
+    def _class_specific_config(self) -> Tuple[int, list[str]]:
+        return 50, ["time", "pres", "P1", "P2", "P3", "accmag", "magx", "magy", "magz", "quat w", "quatx", "quaty", "quatz", "accx", "accy", "accz"]
   
+    def _post_process(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, dict[str, float]]:
+        """Override post_process to add absolute acceleration calculations."""
+        # Perform the base class processing
+        data, summary_info = super()._post_process(data)
+        # Add absolute acceleration calculations
+        data = self._absolute_orientation(data)
+        relevant_fields = ["time", "pres", "P1", "P2", "P3", "accmag", "magx", "magy", "magz", "absaccx", "absaccy", "absaccz"]
+        data = data[relevant_fields]
+        return data, summary_info
+   
     def _absolute_orientation(self, data: pd.DataFrame) -> pd.DataFrame:
-        import quaternion
-
         # Translate body acc with earths mag field to abs reference frame
         quat_ref_frame = quaternion.as_quat_array(
             data[["quat w", "quatx", "quaty", "quatz"]]
@@ -413,6 +345,7 @@ class BDS100(Rapid):
         data.insert(5, "absaccx", acc_earth[:, 0])
         data.insert(6, "absaccy", acc_earth[:, 1])
         data.insert(7, "absaccz", acc_earth[:, 2])
+        
         return data
       
 class BDS250(Rapid):
@@ -438,91 +371,12 @@ class BDS250(Rapid):
         self.fmt = "HI12f4B"  # format string to set byteorder
         self.class_name = "250hz"
         self.column_names_raw = [
-            "samplerate",
-            "time",
-            "P1",
-            "T1",
-            "P2",
-            "T2",
-            "P3",
-            "T3",
-            "accx",
-            "accy",
-            "accz",
-            "gyrox",
-            "gyroy",
-            "gyroz",
-            "calmag",
-            "calacc",
-            "calgyro",
-            "calimu",
-        ]
+            "samplerate", "time", "P1", "T1", "P2", "T2", "P3", "T3", "accx", "accy", "accz", "gyrox", "gyroy",
+            "gyroz", "calmag", "calacc", "calgyro", "calimu"]
         self.data, _ = super()._process_and_save(savecsv, **kwargs)
 
-    def _post_process(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, dict[str, float]]:
-        data["time"] = (data["time"] - data["time"].iloc[0]) / 1000
-        valid_sensors = self.check_unchanged_sensors(data)
-        pres_data = self.compute_pres(data, valid_sensors)
-        data.insert(1, "pres", pres_data['pres'])
-        data.insert(1, "accmag", np.linalg.norm(data[["accx", "accy", "accz"]], axis=-1))
-        data["accmag"] -= 9.81
-        data = data[
-            [
-                "time",
-                "pres",
-                "P1",
-                "P2",
-                "P3",
-                "accmag",
-            ]
-        ]
-        
-        #Creating summary data. Filtering data to 0.5s intervals could remove specific acceleration values
-        #Therefore the acceleration magnitude threshold counts are indicitive for preliminary analysis and require scruitinisation 
-        
-        if data["time"].max() >= 5000:
-          time_warning = "ERROR: Time series incorrect. Data cannot be used."
-        else:
-          time_warning = ""
-        
-        summary_data = data.iloc[::125].reset_index(drop=True) #filter 250hz to every 125 rows = 0.5s
-        num_seconds = len(summary_data)//2
-        minutes, seconds = divmod(num_seconds, 60)
-        duration = f"{minutes:02}:{seconds:02}"
-        #summary_csv_path = self.dir_csv / (self.filename.stem + "_summary.csv")
-        #summary_data.to_csv(summary_csv_path, index=False)
-
-        # Check for unchanged sensors
-        unchanged_sensors = [sensor for sensor, is_valid in valid_sensors.items() if not is_valid]
-        sensors_used_summary = pres_data['sensors_used'].unique()
-        sensors_used_summary_text = ', '.join(sensors_used_summary)
-        
-        if unchanged_sensors:
-          warning_message = f"WARNING: Pressure data error ({', '.join(unchanged_sensors)}). Average taken from {sensors_used_summary_text}"
-        else:
-          warning_message = "All pressure sensors working"
-
-        if time_warning:
-                  warning_message = time_warning + "; " + warning_message
-
-        summary_info = {
-          'duration[mm:ss]':duration,
-          'pres_min[mbar]': data['pres'].min(),
-          'pres_max[mbar]': data['pres'].max(),
-          'acc_max[g]': data['accmag'].max(),
-          '0.5s.acc>5': self.count_threshold_exceedances(summary_data, 'accmag', 5),
-          '0.5s.acc>10': self.count_threshold_exceedances(summary_data, 'accmag', 10),
-          '0.5s.acc>30': self.count_threshold_exceedances(summary_data, 'accmag', 30),
-          '0.5s.acc>50': self.count_threshold_exceedances(summary_data, 'accmag', 50),
-          'messages': warning_message
-        }
-        
-        return data, summary_info
-      
-    def count_threshold_exceedances(self, data: pd.DataFrame, column: str, threshold: float) -> int:
-        """Count exceedances of a specified threshold in the given column."""
-        filtered = data[(data[column] >= threshold)]
-        return filtered.shape[0]
+    def _class_specific_config(self) -> Tuple[int, list[str]]:
+        return 125, ["time", "pres", "P1", "P2", "P3", "accmag"]
 
 if __name__ == "__main__":
     current_date = datetime.now().strftime("%d%m%y")

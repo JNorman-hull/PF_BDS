@@ -20,6 +20,7 @@ py_config()
 py_install("jupyter_client")
 py_install("matplotlib")
 py_install("pandas")
+py_install("quaternion")
 
 #2. Python operation####
 
@@ -86,6 +87,47 @@ delete_pycache()
 
 # summary_csv_path = self.dir_csv / (self.filename.stem + "_summary.csv")
 # summary_data.to_csv(summary_csv_path, index=False)
+
+# def plot_acceleration_overview(self, save: bool = True, show: bool = False) -> None:
+#     t = self.data["time"][::10]  # Downsampling for visualization
+#     accmag = self.data["accmag"].rolling(10).mean()[::10]  # Rolling average for smoothing
+# 
+#     fig, ax = plt.subplots(figsize=(25, 5))
+#     ax.set_xlabel("time [s]")
+#     ax.set_ylabel("Acceleration magnitude [g]")
+#     ax.plot(t, accmag, color="C1")
+#     ax.tick_params(axis="y", labelcolor="C1")
+#     fig.tight_layout()
+# 
+#     if save:
+#         new_filename =  self.filename.stem + "_acc"
+#         plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
+#     if show:
+#         plt.show()
+#     plt.close()
+#     
+# def plot_magnetic_overview(self, save: bool = True, show: bool = False) -> None:
+#     t = self.data["time"][::10]  # Downsampling for visualization
+# 
+#     fig, ax = plt.subplots(figsize=(25, 5))
+#     ax.set_xlabel("time [s]")
+#     ax.set_ylabel("Magnetic flux density [mT]")
+#     
+#     ax.plot(t, self.data["magx"].rolling(10).mean()[::10], color="C1", label="magx")
+#     ax.plot(t, self.data["magy"].rolling(10).mean()[::10], color="C2", label="magy")
+#     ax.plot(t, self.data["magz"].rolling(10).mean()[::10], color="C3", label="magz")
+#     
+#     ax.legend()
+#     fig.tight_layout()
+# 
+#     if save:
+#         new_filename = self.filename.stem + "_mag" 
+#         plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
+#     if show:
+#         plt.show()
+#     plt.close()
+#     
+
 
 #3. BDS txt -> CSV conversion####
 
