@@ -141,14 +141,24 @@ class Rapid(ABC):
         summary_interval, relevant_fields = self._class_specific_config()
         
         data.insert(1, "pres", pres_data['pres'])
-        data.insert(1, "accmag", np.linalg.norm(data[["accx", "accy", "accz"]], axis=-1))
-        data["accmag"] -= 9.81
+        data.insert(1, "accmag", np.linalg.norm(data[["accx", "accy", "accz"]], axis=-1)) #computes the Euclidean norm (magnitude) across the acceleration components along the x, y, and z axes.
+        data["accmag"] -= 9.81 #removes earth gravity
         data = data[relevant_fields]
 
         summary_data = data.iloc[::summary_interval].reset_index(drop=True)
         num_seconds = len(summary_data)//2
         minutes, seconds = divmod(num_seconds, 60)
         duration = f"{minutes:02}:{seconds:02}"
+        #enable saving for checking summary_data if needed
+        #summary_csv_path = self.dir_csv / (self.filename.stem + "_summary.csv")
+        #summary_data.to_csv(summary_csv_path, index=False)
+        
+        #consider 10g as an injury severity limit
+        max_acc_g_force = data['accmag'].max() / 9.81
+        if max_acc_g_force >= 10:
+            acc_warning = "IMPACT: Impact event >= 10g detected"
+        else:
+            acc_warning = ""
 
         unchanged_sensors = [sensor for sensor, is_valid in valid_sensors.items() if not is_valid]
         sensors_used_summary = pres_data['sensors_used'].unique()
@@ -161,16 +171,20 @@ class Rapid(ABC):
 
         if time_warning:
             warning_message = time_warning + "; " + warning_message
+            
+        if acc_warning:
+            warning_message = acc_warning + "; " + warning_message
 
         summary_info = {
             'duration[mm:ss]': duration,
             'pres_min[mbar]': data['pres'].min(),
             'pres_max[mbar]': data['pres'].max(),
-            'acc_max[g]': data['accmag'].max(),
-            '0.5s.acc>5': self.count_threshold_exceedances(summary_data, 'accmag', 5),
-            '0.5s.acc>10': self.count_threshold_exceedances(summary_data, 'accmag', 10),
-            '0.5s.acc>30': self.count_threshold_exceedances(summary_data, 'accmag', 30),
-            '0.5s.acc>50': self.count_threshold_exceedances(summary_data, 'accmag', 50),
+            'acc_max[m/s2]': data['accmag'].max(),
+            'max_impact[g-force]': max_acc_g_force,
+            'n.acc>5g': self.count_threshold_exceedances(data, 'accmag', 49.03),
+            'n.acc>10g': self.count_threshold_exceedances(data, 'accmag', 98.07),
+            'n.acc>30g': self.count_threshold_exceedances(data, 'accmag', 294.20),
+            'n.acc>50g': self.count_threshold_exceedances(data, 'accmag', 490.33),
             'messages': warning_message
         }
 
@@ -203,7 +217,7 @@ class Rapid(ABC):
 
         ax2 = ax1.twinx()
         color = "C1"
-        ax2.set_ylabel("Acceleration magnitude [g]", color=color)
+        ax2.set_ylabel("Acceleration Magnitude (m/s\u00b2)", color=color)
         ax2.plot(t, accmag, color=color)
         ax2.tick_params(axis="y", labelcolor=color)
         fig.tight_layout()
@@ -317,7 +331,10 @@ class BDS100(Rapid):
             "quatx", "quaty", "quatz", "magx", "magy", "magz", "accx", "accy", "accz", "gyrox", "gyroy", "gyroz", "calmag",
             "calacc", "calgyro", "calimu"]
         self.data, _ = super()._process_and_save(savecsv, **kwargs)
-        
+
+#For data with many impacts, set the filter rate here e.g., 50 = every 0.5s at 100hz
+#will break duration calculation currently, needs modifying
+#Change summary_info to use summary_data for threshold counts
     def _class_specific_config(self) -> Tuple[int, list[str]]:
         return 50, ["time", "pres", "P1", "P2", "P3", "accmag", "magx", "magy", "magz", "quat w", "quatx", "quaty", "quatz", "accx", "accy", "accz"]
   
@@ -375,6 +392,9 @@ class BDS250(Rapid):
             "gyroz", "calmag", "calacc", "calgyro", "calimu"]
         self.data, _ = super()._process_and_save(savecsv, **kwargs)
 
+#For data with many impacts, set the filter rate here e.g., 25 = every 0.1s in 250hz (250 rows/1s)
+#will break duration calculation currently, needs modifying
+#Change summary_info to use summary_data for threshold counts
     def _class_specific_config(self) -> Tuple[int, list[str]]:
         return 125, ["time", "pres", "P1", "P2", "P3", "accmag"]
 
@@ -383,6 +403,7 @@ if __name__ == "__main__":
     summary_data = []
     n_files_w_pres_errors = 0
     n_files_w_time_errors = 0
+    n_files_w_impact = 0
 
 #Process BDS100 files
     bds100_files = list(Path("./RAW_data/BDS_100").glob("*.txt"))
@@ -401,6 +422,9 @@ if __name__ == "__main__":
           
         if "ERROR" in summary_info["messages"]:
             n_files_w_time_errors += 1
+            
+        if "IMPACT" in summary_info["messages"]:
+            n_files_w_impact += 1
         
         file_info = mymeas.parse_filename_info()
         summary_data.append({
@@ -429,6 +453,9 @@ if __name__ == "__main__":
         if "ERROR" in summary_info["messages"]:
             n_files_w_time_errors += 1
         
+        if "IMPACT" in summary_info["messages"]:
+            n_files_w_impact += 1
+        
         file_info = mymeas.parse_filename_info()
         summary_data.append({
             'file': filename.name,
@@ -448,3 +475,4 @@ if __name__ == "__main__":
     print(f"{len(summary_data)}/{len(bds100_files) + len(bds250_files)} txt files processed")
     print(f"{n_files_w_pres_errors}/{len(summary_data)} contain pressure errors")
     print(f"{n_files_w_time_errors}/{len(summary_data)} contain time series errors")
+    print(f"{n_files_w_impact}/{len(summary_data)} contain impact >= 10g")
