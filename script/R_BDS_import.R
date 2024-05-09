@@ -80,6 +80,20 @@ delete_pycache()
 #Check if needed
 #import sys; print(sys.path)
 
+# acc_5_ = (data['accmag'] >= 5).sum()
+# acc_5g = ((data['accmag'] >= 5) & (data['time'].diff().fillna(float('inf')) >= 0.02)).sum()
+
+
+# summary_csv_path = self.dir_csv / (self.filename.stem + "_summary.csv")
+# summary_data.to_csv(summary_csv_path, index=False)
+
 #3. BDS txt -> CSV conversion####
+
+#Add BDS 100hz and BDS 250hz txt files to RAW_data/BDS100 and RAW_data/BDS250
+#Run BDS_import script to convert raw txt files to csv, calculate average pressure (P1, P2, P3 - mbar),
+#calculate acceleration magnitude (g-force, gravity removed), check pressure sensor operation incl. warnings,
+#check time series incl. warnings, plot pressure sensor checks, plot pressure and acceleration overview,
+#plot magnetic flux (BDS100), create batch_summary containing sensor metadata
+#output files stored in ./csv and ./plots
 
 reticulate::source_python('./script/BDS_import.py')

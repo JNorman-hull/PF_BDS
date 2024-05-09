@@ -4,6 +4,8 @@ import struct
 from abc import ABC, abstractmethod
 from pathlib import Path
 from jupyter_client import BlockingKernelClient
+from typing import Tuple
+from datetime import datetime
 
 from matplotlib import pyplot as plt
 plt.style.use("seaborn-v0_8-whitegrid")
@@ -34,12 +36,12 @@ class Rapid(ABC):
             **kwargs
         )
 
-    def _process_and_save(self, savecsv, **kwargs) -> None:
+    def _process_and_save(self, savecsv, **kwargs):
         data = self._read_data()
-        data = self._post_process(data)
-        if savecsv == True:
+        data, summary_info = self._post_process(data)
+        if savecsv:
             self._save_as_csv(data, **kwargs)
-        return data
+        return data, summary_info
 
     @abstractmethod
     def _post_process(self, data: pd.DataFrame) -> pd.DataFrame:
@@ -56,6 +58,68 @@ class Rapid(ABC):
         data = [x for x in iter]
         data = pd.DataFrame(data, columns=self.column_names_raw)
         return data
+      
+    def parse_filename_info(self) -> dict:
+        """Extracts the sensor name, date, and time from the filename."""
+        filename = self.filename.stem  # Use stem to avoid the file extension
+
+        # Assuming a filename format like 'C010706133321.txt'
+        sensor = filename[:3]  # First three characters are the sensor name
+        date_str = filename[3:7]  # Characters 4 to 7 are the date in MMDD format
+        time_str = filename[7:13]  # Characters 8 to 13 are the time in HHMMSS format
+
+        date_deploy = datetime.strptime(date_str, "%m%d").strftime("%d/%m")
+        time_deploy = f"{time_str[:2]}:{time_str[2:4]}:{time_str[4:]}"
+
+        return {
+            'sensor': sensor,
+            'date_deploy': date_deploy,
+            'time_deploy': time_deploy
+        }
+        
+    def check_unchanged_sensors(self, data: pd.DataFrame, threshold: int = 100) -> dict[str, bool]:
+        """Check if any sensor data remains constant over a given threshold.
+    
+        Parameters:
+        - data (pd.DataFrame): The dataset containing sensor readings.
+        - threshold (int): The number of rows to check for unchanged data.
+    
+        Returns:
+        - list[str]: List of sensors that have remained unchanged.
+        """
+        #P1 = Left, P2 = Center, P3 = Right
+        unchanged_sensors = {}
+        for sensor in ["P1", "P2", "P3"]:
+            if sensor in data.columns:
+                series = data[sensor]
+                unchanged = series.rolling(threshold).apply(lambda x: pd.Series(x).nunique() == 1, raw=True).max() == 1
+                unchanged_sensors[sensor] = not unchanged
+        return unchanged_sensors
+      
+    def compute_pres(self, data: pd.DataFrame, valid_sensors: dict[str, bool]) -> pd.DataFrame:
+        """Compute the 'pres' value based on the working sensors.
+    
+        Parameters:
+        - data (pd.DataFrame): The dataset containing sensor readings.
+        - valid_sensors (Dict[str, bool]): Dictionary indicating which sensors are working.
+    
+        Returns:
+        - pd.Series: Computed 'pres' values.
+        """
+        # Define fallback logic for computing the 'pres' value
+        #If only one sensor works, return the value, if more than one works, return average
+        def compute_row(row):
+            active_sensors = [sensor for sensor, is_valid in valid_sensors.items() if is_valid]
+            values = [row[sensor] for sensor in active_sensors]
+            if len(values) == 0:
+                return [np.nan, ','.join(active_sensors)]
+            elif len(values) == 1:
+                return [values[0], ','.join(active_sensors)]
+            else:
+                return [np.mean(values), ','.join(active_sensors)]
+    
+        result = data.apply(compute_row, axis=1, result_type='expand')
+        return pd.DataFrame(result.values, columns=['pres', 'sensors_used'])  
 
     def plot_data_overview(self, save: bool = True, show: bool = False) -> None:
         """Plots an overview for the generated data.
@@ -97,45 +161,6 @@ class Rapid(ABC):
             plt.show()
         plt.close()
         
-    def plot_acceleration_overview(self, save: bool = True, show: bool = False) -> None:
-        t = self.data["time"][::10]  # Downsampling for visualization
-        accmag = self.data["accmag"].rolling(10).mean()[::10]  # Rolling average for smoothing
-
-        fig, ax = plt.subplots(figsize=(25, 5))
-        ax.set_xlabel("time [s]")
-        ax.set_ylabel("Acceleration magnitude [g]")
-        ax.plot(t, accmag, color="C1")
-        ax.tick_params(axis="y", labelcolor="C1")
-        fig.tight_layout()
-
-        if save:
-            new_filename =  self.filename.stem + "_acc"
-            plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
-        if show:
-            plt.show()
-        plt.close()
-        
-    def plot_magnetic_overview(self, save: bool = True, show: bool = False) -> None:
-        t = self.data["time"][::10]  # Downsampling for visualization
-
-        fig, ax = plt.subplots(figsize=(25, 5))
-        ax.set_xlabel("time [s]")
-        ax.set_ylabel("Magnetic flux density [mT]")
-        
-        ax.plot(t, self.data["magx"].rolling(10).mean()[::10], color="C1", label="magx")
-        ax.plot(t, self.data["magy"].rolling(10).mean()[::10], color="C2", label="magy")
-        ax.plot(t, self.data["magz"].rolling(10).mean()[::10], color="C3", label="magz")
-        
-        ax.legend()
-        fig.tight_layout()
-
-        if save:
-            new_filename = self.filename.stem + "_mag" 
-            plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
-        if show:
-            plt.show()
-        plt.close()
-        
     def plot_acc_mag_overview(self, save: bool = True, show: bool = False) -> None:
         t = self.data["time"][::10]
         
@@ -167,7 +192,88 @@ class Rapid(ABC):
             plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
         if show == True:
             plt.show()
-        plt.close()    
+        plt.close()   
+        
+    def plot_pressure_overview(self, save: bool = True, show: bool = False) -> None:
+        """Plot individual raw values of P1, P2, and P3 to identify malfunctioning sensors."""
+        t = self.data["time"][::10]  # Downsampling for visualization
+        p1 = self.data["P1"].rolling(10).mean()[::10]  # Rolling average for smoothing
+        p2 = self.data["P2"].rolling(10).mean()[::10]
+        p3 = self.data["P3"].rolling(10).mean()[::10]
+    
+        fig, ax = plt.subplots(figsize=(25, 5))
+        ax.set_xlabel("time [s]")
+        ax.set_ylabel("Pressure [hPa]")
+    
+        # Plot individual pressure sensors
+        ax.plot(t, p1, color="C1", label="P1") #left sensor
+        ax.plot(t, p2, color="C2", label="P2") #center sensor
+        ax.plot(t, p3, color="C3", label="P3") #right sensor
+        ax.legend()
+        
+        #check for unchanged pressure values and report error
+        valid_sensors = self.check_unchanged_sensors(self.data)
+        pres_data = self.compute_pres(self.data, valid_sensors)
+        unchanged_sensors = [sensor for sensor, is_valid in valid_sensors.items() if not is_valid]
+        sensors_used_summary = pres_data['sensors_used'].unique()
+        sensors_used_summary_text = ', '.join(sensors_used_summary)
+        if unchanged_sensors:
+          warning_message = f"WARNING: Pressure data error ({', '.join(unchanged_sensors)}). Average taken from {sensors_used_summary_text}"
+        else:
+          warning_message = "All pressure sensors working"
+        
+        if warning_message:
+          ax.text(0.5, 0.9, warning_message, fontsize=25, color="red", ha="center", transform=ax.transAxes)
+        
+        fig.tight_layout()
+
+        if save == True:
+            new_filename = self.filename.stem + "_pres_validation" 
+            plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
+        if show == True:
+            plt.show()
+        plt.close() 
+        
+    # def plot_acceleration_overview(self, save: bool = True, show: bool = False) -> None:
+    #     t = self.data["time"][::10]  # Downsampling for visualization
+    #     accmag = self.data["accmag"].rolling(10).mean()[::10]  # Rolling average for smoothing
+    # 
+    #     fig, ax = plt.subplots(figsize=(25, 5))
+    #     ax.set_xlabel("time [s]")
+    #     ax.set_ylabel("Acceleration magnitude [g]")
+    #     ax.plot(t, accmag, color="C1")
+    #     ax.tick_params(axis="y", labelcolor="C1")
+    #     fig.tight_layout()
+    # 
+    #     if save:
+    #         new_filename =  self.filename.stem + "_acc"
+    #         plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
+    #     if show:
+    #         plt.show()
+    #     plt.close()
+    #     
+    # def plot_magnetic_overview(self, save: bool = True, show: bool = False) -> None:
+    #     t = self.data["time"][::10]  # Downsampling for visualization
+    # 
+    #     fig, ax = plt.subplots(figsize=(25, 5))
+    #     ax.set_xlabel("time [s]")
+    #     ax.set_ylabel("Magnetic flux density [mT]")
+    #     
+    #     ax.plot(t, self.data["magx"].rolling(10).mean()[::10], color="C1", label="magx")
+    #     ax.plot(t, self.data["magy"].rolling(10).mean()[::10], color="C2", label="magy")
+    #     ax.plot(t, self.data["magz"].rolling(10).mean()[::10], color="C3", label="magz")
+    #     
+    #     ax.legend()
+    #     fig.tight_layout()
+    # 
+    #     if save:
+    #         new_filename = self.filename.stem + "_mag" 
+    #         plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
+    #     if show:
+    #         plt.show()
+    #     plt.close()
+    #     
+ 
 
 class BDS100(Rapid):
     def __init__(self, filename: str, savecsv: bool = True, **kwargs) -> None:
@@ -190,6 +296,7 @@ class BDS100(Rapid):
         self.dir_csv = self.dir_csv / "BDS100"
         self.dir_plots = self.dir_plots / "BDS100"
         self.fmt = "HI22f4B"  # format string to set byteorder
+        self.class_name = "100hz"
         self.column_names_raw = [
             "sample rate",
             "time",
@@ -220,39 +327,76 @@ class BDS100(Rapid):
             "calgyro",
             "calimu",
         ]
-        self.data = super()._process_and_save(savecsv, **kwargs)
+        self.data, _ = super()._process_and_save(savecsv, **kwargs)
 
-    def _post_process(self, data: pd.DataFrame) -> pd.DataFrame:
-        data["time"] = (data["time"] - data["time"][0]) / 1000
-        data.insert(1, "pres", np.average(data[["P1", "P2", "P3"]], axis=-1))
+    def _post_process(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, dict[str, float]]:
+        data["time"] = (data["time"] - data["time"].iloc[0]) / 1000
+        valid_sensors = self.check_unchanged_sensors(data)
+        pres_data = self.compute_pres(data, valid_sensors)
+        data.insert(1, "pres", pres_data['pres'])
         data.insert(1, "accmag", np.linalg.norm(data[["accx", "accy", "accz"]], axis=-1))
         data["accmag"] -= 9.81
         data = data[
             [
                 "time",
                 "pres",
-                "accx",
-                "accy",
-                "accz",
+                "P1",
+                "P2",
+                "P3",
                 "accmag",
-                "gyrox",
-                "gyroy",
-                "gyroz",
-                "quat w",
-                "quatx",
-                "quaty",
-                "quatz",
                 "magx",
                 "magy",
                 "magz",
-                "calmag",
-                "calacc",
-                "calgyro",
-                "calimu",
             ]
         ]
-        return data
+        
+        #Creating summary data. Filtering data to 0.5s intervals could remove specific acceleration values
+        #Therefore the acceleration magnitude threshold counts are indicitive for preliminary analysis and require scruitinisation 
+        
+        if data["time"].max() >= 5000:
+          time_warning = "ERROR: Time series incorrect. Data cannot be used."
+        else:
+          time_warning = ""
+        
+        summary_data = data.iloc[::50].reset_index(drop=True) #filter 100hz to every 50 rows = 0.5s
+        num_seconds = len(summary_data)//2
+        minutes, seconds = divmod(num_seconds, 60)
+        duration = f"{minutes:02}:{seconds:02}"
+        #summary_csv_path = self.dir_csv / (self.filename.stem + "_summary.csv")
+        #summary_data.to_csv(summary_csv_path, index=False)
 
+        # Check for unchanged sensors
+        unchanged_sensors = [sensor for sensor, is_valid in valid_sensors.items() if not is_valid]
+        sensors_used_summary = pres_data['sensors_used'].unique()
+        sensors_used_summary_text = ', '.join(sensors_used_summary)
+        
+        if unchanged_sensors:
+          warning_message = f"WARNING: Pressure data error ({', '.join(unchanged_sensors)}). Average taken from {sensors_used_summary_text}"
+        else:
+          warning_message = "All pressure sensors working"
+        
+        if time_warning:
+          warning_message = time_warning + "; " + warning_message
+        
+        summary_info = {
+          'duration[mm:ss]':duration,
+          'pres_min[mbar]': data['pres'].min(),
+          'pres_max[mbar]': data['pres'].max(),
+          'acc_max[g]': data['accmag'].max(),
+          '0.5s.acc>5': self.count_threshold_exceedances(summary_data, 'accmag', 5),
+          '0.5s.acc>10': self.count_threshold_exceedances(summary_data, 'accmag', 10),
+          '0.5s.acc>30': self.count_threshold_exceedances(summary_data, 'accmag', 30),
+          '0.5s.acc>50': self.count_threshold_exceedances(summary_data, 'accmag', 50),
+          'messages': warning_message
+        }
+        
+        return data, summary_info
+      
+    def count_threshold_exceedances(self, data: pd.DataFrame, column: str, threshold: float) -> int:
+        """Count exceedances of a specified threshold in the given column."""
+        filtered = data[(data[column] >= threshold)]
+        return filtered.shape[0]
+  
     def _absolute_orientation(self, data: pd.DataFrame) -> pd.DataFrame:
         import quaternion
 
@@ -270,13 +414,183 @@ class BDS100(Rapid):
         data.insert(6, "absaccy", acc_earth[:, 1])
         data.insert(7, "absaccz", acc_earth[:, 2])
         return data
+      
+class BDS250(Rapid):
+    def __init__(self, filename: str, savecsv: bool = True, **kwargs) -> None:
+        """This class processes BDS measurements at 250 Hz. 
+        At that speed, there is no absolute orientation computation, 
+        outputs are absolute pressure, accelerometer and gyroscope.
+        Acceleration magnitude is included in the ouput and 
+        has gravity already removed.
+
+        Parameters
+        ----------
+        filename : str
+            Relative file location + filename of the measurement
+        savecsv : bool, optional
+            Saves the processed data as a csv file if True, by default True
+        **kwargs : optional
+            Keyword arguments for changing how the csv is generated and are feeded directly into pd.read_csv().
+        """
+        super().__init__(filename)
+        self.dir_csv = self.dir_csv / "BDS250"
+        self.dir_plots = self.dir_plots / "BDS250"
+        self.fmt = "HI12f4B"  # format string to set byteorder
+        self.class_name = "250hz"
+        self.column_names_raw = [
+            "samplerate",
+            "time",
+            "P1",
+            "T1",
+            "P2",
+            "T2",
+            "P3",
+            "T3",
+            "accx",
+            "accy",
+            "accz",
+            "gyrox",
+            "gyroy",
+            "gyroz",
+            "calmag",
+            "calacc",
+            "calgyro",
+            "calimu",
+        ]
+        self.data, _ = super()._process_and_save(savecsv, **kwargs)
+
+    def _post_process(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, dict[str, float]]:
+        data["time"] = (data["time"] - data["time"].iloc[0]) / 1000
+        valid_sensors = self.check_unchanged_sensors(data)
+        pres_data = self.compute_pres(data, valid_sensors)
+        data.insert(1, "pres", pres_data['pres'])
+        data.insert(1, "accmag", np.linalg.norm(data[["accx", "accy", "accz"]], axis=-1))
+        data["accmag"] -= 9.81
+        data = data[
+            [
+                "time",
+                "pres",
+                "P1",
+                "P2",
+                "P3",
+                "accmag",
+            ]
+        ]
+        
+        #Creating summary data. Filtering data to 0.5s intervals could remove specific acceleration values
+        #Therefore the acceleration magnitude threshold counts are indicitive for preliminary analysis and require scruitinisation 
+        
+        if data["time"].max() >= 5000:
+          time_warning = "ERROR: Time series incorrect. Data cannot be used."
+        else:
+          time_warning = ""
+        
+        summary_data = data.iloc[::125].reset_index(drop=True) #filter 250hz to every 125 rows = 0.5s
+        num_seconds = len(summary_data)//2
+        minutes, seconds = divmod(num_seconds, 60)
+        duration = f"{minutes:02}:{seconds:02}"
+        #summary_csv_path = self.dir_csv / (self.filename.stem + "_summary.csv")
+        #summary_data.to_csv(summary_csv_path, index=False)
+
+        # Check for unchanged sensors
+        unchanged_sensors = [sensor for sensor, is_valid in valid_sensors.items() if not is_valid]
+        sensors_used_summary = pres_data['sensors_used'].unique()
+        sensors_used_summary_text = ', '.join(sensors_used_summary)
+        
+        if unchanged_sensors:
+          warning_message = f"WARNING: Pressure data error ({', '.join(unchanged_sensors)}). Average taken from {sensors_used_summary_text}"
+        else:
+          warning_message = "All pressure sensors working"
+
+        if time_warning:
+                  warning_message = time_warning + "; " + warning_message
+
+        summary_info = {
+          'duration[mm:ss]':duration,
+          'pres_min[mbar]': data['pres'].min(),
+          'pres_max[mbar]': data['pres'].max(),
+          'acc_max[g]': data['accmag'].max(),
+          '0.5s.acc>5': self.count_threshold_exceedances(summary_data, 'accmag', 5),
+          '0.5s.acc>10': self.count_threshold_exceedances(summary_data, 'accmag', 10),
+          '0.5s.acc>30': self.count_threshold_exceedances(summary_data, 'accmag', 30),
+          '0.5s.acc>50': self.count_threshold_exceedances(summary_data, 'accmag', 50),
+          'messages': warning_message
+        }
+        
+        return data, summary_info
+      
+    def count_threshold_exceedances(self, data: pd.DataFrame, column: str, threshold: float) -> int:
+        """Count exceedances of a specified threshold in the given column."""
+        filtered = data[(data[column] >= threshold)]
+        return filtered.shape[0]
 
 if __name__ == "__main__":
+    current_date = datetime.now().strftime("%d%m%y")
+    summary_data = []
+    n_files_w_pres_errors = 0
+    n_files_w_time_errors = 0
 
-    for f in Path("./RAW_data/BDS_100").glob("*.txt"):
+#Process BDS100 files
+    bds100_files = list(Path("./RAW_data/BDS_100").glob("*.txt"))
+    print(f"Processing {len(bds100_files)} BDS100 files...")
+    for f in bds100_files:    
         filename = f
+        print(f"Processing {filename.name}")
         mymeas = BDS100(filename)
+        _, summary_info = mymeas._process_and_save(True)
         mymeas.plot_data_overview()
-        mymeas.plot_acceleration_overview()
-        mymeas.plot_magnetic_overview()
         mymeas.plot_acc_mag_overview()
+        mymeas.plot_pressure_overview()
+        
+        if "WARNING" in summary_info["messages"]:
+            n_files_w_pres_errors += 1
+          
+        if "ERROR" in summary_info["messages"]:
+            n_files_w_time_errors += 1
+        
+        file_info = mymeas.parse_filename_info()
+        summary_data.append({
+            'file': filename.name,
+            'class': mymeas.class_name,
+            **file_info,
+            **summary_info
+        })
+        print(f"{filename.name} complete")
+
+
+#Process BDS250 files
+    bds250_files = list(Path("./RAW_data/BDS_250").glob("*.txt"))
+    print(f"Processing {len(bds250_files)} BDS250 files...")
+    for f in bds250_files:
+        filename = f
+        print(f"Processing {filename.name}")
+        mymeas = BDS250(filename)
+        _, summary_info = mymeas._process_and_save(True)
+        mymeas.plot_data_overview()
+        mymeas.plot_pressure_overview()
+        
+        if "WARNING" in summary_info["messages"]:
+            n_files_w_pres_errors += 1
+        
+        if "ERROR" in summary_info["messages"]:
+            n_files_w_time_errors += 1
+        
+        file_info = mymeas.parse_filename_info()
+        summary_data.append({
+            'file': filename.name,
+            'class': mymeas.class_name,
+            **file_info,
+            **summary_info
+        })
+        print(f"{filename.name} complete")
+        
+#Create summary CSV
+    summary_df = pd.DataFrame(summary_data)
+    summary_csv_filename = f"{current_date}_batch_summary.csv"
+    summary_csv_path = Path("csv") / summary_csv_filename
+    summary_df.to_csv(summary_csv_path, index=False)
+    
+    print("Operation complete.")
+    print(f"{len(summary_data)}/{len(bds100_files) + len(bds250_files)} txt files processed")
+    print(f"{n_files_w_pres_errors}/{len(summary_data)} contain pressure errors")
+    print(f"{n_files_w_time_errors}/{len(summary_data)} contain time series errors")
