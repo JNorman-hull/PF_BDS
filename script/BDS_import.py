@@ -1,4 +1,5 @@
 #Python BDS txt > CSV conversion
+#Adapated from https://github.com/jtuhtan/RAPID/tree/main
 
 import struct
 from abc import ABC, abstractmethod
@@ -138,17 +139,19 @@ class Rapid(ABC):
             
         valid_sensors = self.check_unchanged_sensors(data)
         pres_data = self.compute_pres(data, valid_sensors)
-        summary_interval, relevant_fields = self._class_specific_config()
+        sample_speed, relevant_fields = self._class_specific_config()
         
         data.insert(1, "pres", pres_data['pres'])
         data.insert(1, "accmag", np.linalg.norm(data[["accx", "accy", "accz"]], axis=-1)) #computes the Euclidean norm (magnitude) across the acceleration components along the x, y, and z axes.
         data["accmag"] -= 9.81 #removes earth gravity
         data = data[relevant_fields]
 
-        summary_data = data.iloc[::summary_interval].reset_index(drop=True)
-        num_seconds = len(summary_data)//2
+        #Calculate duration of sensor deployment
+        num_seconds = len(data)// sample_speed
         minutes, seconds = divmod(num_seconds, 60)
         duration = f"{minutes:02}:{seconds:02}"
+
+        #summary_data = data.iloc[::summary_interval].reset_index(drop=True)
         #enable saving for checking summary_data if needed
         #summary_csv_path = self.dir_csv / (self.filename.stem + "_summary.csv")
         #summary_data.to_csv(summary_csv_path, index=False)
@@ -160,6 +163,11 @@ class Rapid(ABC):
         else:
             acc_warning = ""
 
+        pres_min_index = data['pres'].idxmin()
+        pres_min_time = data['time'][pres_min_index]
+        acc_max_index = data['accmag'].idxmin()
+        acc_max_time = data['time'][acc_max_index]
+        
         unchanged_sensors = [sensor for sensor, is_valid in valid_sensors.items() if not is_valid]
         sensors_used_summary = pres_data['sensors_used'].unique()
         sensors_used_summary_text = ', '.join(sensors_used_summary)
@@ -178,8 +186,10 @@ class Rapid(ABC):
         summary_info = {
             'duration[mm:ss]': duration,
             'pres_min[mbar]': data['pres'].min(),
+            'pres_min[time]': pres_min_time,
             'pres_max[mbar]': data['pres'].max(),
             'acc_max[m/s2]': data['accmag'].max(),
+            'acc_max[time]': acc_max_time,
             'max_impact[g-force]': max_acc_g_force,
             'n.acc>5g': self.count_threshold_exceedances(data, 'accmag', 49.03),
             'n.acc>10g': self.count_threshold_exceedances(data, 'accmag', 98.07),
@@ -204,8 +214,8 @@ class Rapid(ABC):
             Show an interactive plot when executed, by default False
         """
         t = self.data["time"][::10]
-        pres = self.data["pres"].rolling(10).mean()[::10]
-        accmag = self.data["accmag"].rolling(10).mean()[::10]
+        pres = self.data["pres"].rolling(10).mean()[::10] 
+        accmag = self.data["accmag"].rolling(10).mean()[::10] 
 
         color = "C0"
         fig, ax1 = plt.subplots(figsize=(25, 5))
@@ -332,11 +342,8 @@ class BDS100(Rapid):
             "calacc", "calgyro", "calimu"]
         self.data, _ = super()._process_and_save(savecsv, **kwargs)
 
-#For data with many impacts, set the filter rate here e.g., 50 = every 0.5s at 100hz
-#will break duration calculation currently, needs modifying
-#Change summary_info to use summary_data for threshold counts
     def _class_specific_config(self) -> Tuple[int, list[str]]:
-        return 50, ["time", "pres", "P1", "P2", "P3", "accmag", "magx", "magy", "magz", "quat w", "quatx", "quaty", "quatz", "accx", "accy", "accz"]
+        return 100, ["time", "pres", "P1", "P2", "P3", "accmag", "magx", "magy", "magz", "quat w", "quatx", "quaty", "quatz", "accx", "accy", "accz"]
   
     def _post_process(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, dict[str, float]]:
         """Override post_process to add absolute acceleration calculations."""
@@ -392,11 +399,8 @@ class BDS250(Rapid):
             "gyroz", "calmag", "calacc", "calgyro", "calimu"]
         self.data, _ = super()._process_and_save(savecsv, **kwargs)
 
-#For data with many impacts, set the filter rate here e.g., 25 = every 0.1s in 250hz (250 rows/1s)
-#will break duration calculation currently, needs modifying
-#Change summary_info to use summary_data for threshold counts
     def _class_specific_config(self) -> Tuple[int, list[str]]:
-        return 125, ["time", "pres", "P1", "P2", "P3", "accmag"]
+        return 250, ["time", "pres", "P1", "P2", "P3", "accmag"]
 
 if __name__ == "__main__":
     current_date = datetime.now().strftime("%d%m%y")
@@ -428,7 +432,7 @@ if __name__ == "__main__":
         
         file_info = mymeas.parse_filename_info()
         summary_data.append({
-            'file': filename.name,
+            'file': filename.stem,
             'class': mymeas.class_name,
             **file_info,
             **summary_info
@@ -458,7 +462,7 @@ if __name__ == "__main__":
         
         file_info = mymeas.parse_filename_info()
         summary_data.append({
-            'file': filename.name,
+            'file': filename.stem,
             'class': mymeas.class_name,
             **file_info,
             **summary_info
