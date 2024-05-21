@@ -79,7 +79,7 @@ class Rapid(ABC):
         """Provide summary interval and relevant fields."""
         pass
 
-    def check_unchanged_sensors(self, data: pd.DataFrame, threshold: int = 100) -> dict[str, bool]:
+    def check_unchanged_sensors(self, data: pd.DataFrame, threshold: int = 96) -> dict[str, bool]:
         """Check if any sensor data remains constant over a given threshold.
     
         Parameters:
@@ -89,6 +89,7 @@ class Rapid(ABC):
         Returns:
         - list[str]: List of sensors that have remained unchanged.
         """
+        #threhold @ 96 = check every 1s
         #P1 = Left, P2 = Center, P3 = Right
         unchanged_sensors = {}
         for sensor in ["P1", "P2", "P3"]:
@@ -147,6 +148,7 @@ class Rapid(ABC):
         data = data[relevant_fields]
 
         #Calculate duration of sensor deployment
+        #where sample_speed = 96 rows for 1s
         num_seconds = len(data)// sample_speed
         minutes, seconds = divmod(num_seconds, 60)
         duration = f"{minutes:02}:{seconds:02}"
@@ -343,7 +345,8 @@ class BDS100(Rapid):
         self.data, _ = super()._process_and_save(savecsv, **kwargs)
 
     def _class_specific_config(self) -> Tuple[int, list[str]]:
-        return 100, ["time", "pres", "P1", "P2", "P3", "accmag", "magx", "magy", "magz", "quat w", "quatx", "quaty", "quatz", "accx", "accy", "accz"]
+        return 96, ["time", "pres", "P1", "P2", "P3", "accmag", "magx", "magy", "magz", "quat w", "quatx", "quaty", "quatz", "accx", "accy", "accz"]
+  #96 rows = 1s
   
     def _post_process(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, dict[str, float]]:
         """Override post_process to add absolute acceleration calculations."""
@@ -400,7 +403,8 @@ class BDS250(Rapid):
         self.data, _ = super()._process_and_save(savecsv, **kwargs)
 
     def _class_specific_config(self) -> Tuple[int, list[str]]:
-        return 250, ["time", "pres", "P1", "P2", "P3", "accmag"]
+        return 96, ["time", "pres", "P1", "P2", "P3", "accmag"]
+    #96 rows = 1s. Even when sensor set to 250hz, data log is at 100hz
 
 if __name__ == "__main__":
     current_date = datetime.now().strftime("%d%m%y")

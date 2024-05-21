@@ -10,6 +10,8 @@
 #Required libraries####
 
 library(tidyverse)
+library(plotly)
+library(pracma)
 
 #1. Load data ####
 
@@ -21,38 +23,44 @@ bds100_dir <- file.path(batch_meta_dir, "BDS100")
 bds250_dir <- file.path(batch_meta_dir, "BDS250")
 
 #Run process_batch_files to consolidate data frames by sensor sample rate, remove unnecessary columns and set variable structure 
+#requires batch_summary file to be present
+#ensure previously processed batch_summary has been moved
+
 process_batch_files(batch_meta_dir, bds100_dir, bds250_dir)
 
-#add treatment variables to 100hz and 250hz consolidated files
+#2. BDS analysis ####
+
+#Run prototype BDS analysis tool for: 
+#nadir identification and validation, max pressure identification (1s) and validation
+#Atmospheric/static pressure validation, rate pressure change calculation
+#Ratio pressure change calculation, log ratio pressure change calculation
+#acceleration magnitude identification (0.1s), injection and tailwater identification
+#passage point assignment, time series normalization
+
+BDSAnalysisTool(batch_summary, data_250hz, data_100hz, 250)
+
+#After analysis, add treatment variables
 add_treatment(data_250hz, "data_250hz")
-add_treatment(data_100hz, "data_100hz")
+
+#When batch complete, crop data to passage points, save and export
+#If continuing with analysis, remove NA passage_points to reduce memory consumption from data files
+save_data(batch_summary, data_100hz, data_250hz)
+
+#Prototype tool to be updated with
+#Calculate and add passage duration
+#e.g., total passage (inj. - tail), injection to nadir, nadir to tail,
+#max impact within 1s nadir
+#usability features e.g., user can end process at any point, current calculations saved to batch_summary, pop-out viewer window
 
 #subset wrangled data frames by dataset name
-subset_by_long_id(data_100hz)
-subset_by_long_id(data_250hz)
+#subset_by_long_id(data_250hz)
 
-#processed data now ready for basic plots and ROI analysis
-
-#2. Visualization and ROI analysis ####
-
-
-
-
-
-
-
-
-#create plots and determine ROI
-# Could automate determining where the nadir occurs and then plot time either side of this region 
-# So use the nadir time from batch_summary to determine this
-# do the same for max acceleration, but this will miss multiple acceleration events, so ROI analysis is required, and note the accleration times
-# to create plots 5s either side of acceleration, for example
-#filter data sets based on ROI
-#determine number of impact events (e.g., 1s apart?)
-#determine severity of impact events
-#determine nadir, max pressure before
-#determine rate of change and ratio change
-#determine LPR
-#plot lpr between operational scenarios
-#need a normalize time step to create the final plots where nadir = 0.5 and data around = 0 - 1
-# the same is required for acceleration too 
+#Expectation with pump
+#1. Atmospheric pressure when sensor calibrates in air (~1000mbar)
+#2. Static pressure when BDS exits injector pipe into water column should increase from atmospheric pressure
+#   but will be minimal
+#3. Static pressure will possibly remain unaffected prior to pump interaction as the pipework is a fixed diameter
+#4. The impeller of the pump creates a low-pressure zone to draw water into the pump, so pressure should drop below
+#   atmospheric pressure (nadir). Velocity increases = pressure decreases
+#5. Pressure will then increase at discharge, and then drop to a similar static pressure to pre-suction
+#6. Pressure will then increase when the sensors enter the recapture tank due to water depth
