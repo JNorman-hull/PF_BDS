@@ -161,7 +161,7 @@ class Rapid(ABC):
         #consider 10g as an injury severity limit
         max_acc_g_force = data['accmag'].max() / 9.81
         if max_acc_g_force >= 10:
-            acc_warning = "IMPACT: Impact event >= 10g detected"
+            acc_warning = "ACC: Acceleration event >= 100 m/s2 detected"
         else:
             acc_warning = ""
 
@@ -282,39 +282,39 @@ class Rapid(ABC):
             plt.show()
         plt.close() 
         
-    def plot_acc_mag_overview(self, save: bool = True, show: bool = False) -> None:
-        """Plot acceleration magnitude with magnetic flux for 100hz sensors."""
-        t = self.data["time"][::10]
-        
-        fig, ax1 = plt.subplots(figsize=(25, 5))
-        ax1.set_xlabel("time [s]")
-        
-        color = "C0"
-        ax1.set_ylabel("Acceleration magnitude [g]", color=color)
-        ax1.plot(t, self.data["accmag"].rolling(10).mean()[::10], color=color, label="Acceleration")
-        ax1.tick_params(axis='y', labelcolor=color)
-        ax1.ticklabel_format(useOffset=False)
-
-        ax2 = ax1.twinx()
-        color = "C1"
-        ax2.set_ylabel("Magnetic flux density [mT]", color=color)
-        ax2.plot(t, self.data["magx"].rolling(10).mean()[::10], color="C1", label="magx")
-        ax2.plot(t, self.data["magy"].rolling(10).mean()[::10], color="C2", label="magy")
-        ax2.plot(t, self.data["magz"].rolling(10).mean()[::10], color="C3", label="magz")
-        ax2.tick_params(axis='y', labelcolor=color)
-        
-        lines, labels = ax1.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax2.legend(lines + lines2, labels + labels2, loc='upper right')
-        
-        fig.tight_layout()
-
-        if save == True:
-            new_filename = self.filename.stem + "_acc_mag" 
-            plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
-        if show == True:
-            plt.show()
-        plt.close()   
+    # def plot_acc_mag_overview(self, save: bool = True, show: bool = False) -> None:
+    #     """Plot acceleration magnitude with magnetic flux for 100hz sensors."""
+    #     t = self.data["time"][::10]
+    #     
+    #     fig, ax1 = plt.subplots(figsize=(25, 5))
+    #     ax1.set_xlabel("time [s]")
+    #     
+    #     color = "C0"
+    #     ax1.set_ylabel("Acceleration magnitude [g]", color=color)
+    #     ax1.plot(t, self.data["accmag"].rolling(10).mean()[::10], color=color, label="Acceleration")
+    #     ax1.tick_params(axis='y', labelcolor=color)
+    #     ax1.ticklabel_format(useOffset=False)
+    # 
+    #     ax2 = ax1.twinx()
+    #     color = "C1"
+    #     ax2.set_ylabel("Magnetic flux density [mT]", color=color)
+    #     ax2.plot(t, self.data["magx"].rolling(10).mean()[::10], color="C1", label="magx")
+    #     ax2.plot(t, self.data["magy"].rolling(10).mean()[::10], color="C2", label="magy")
+    #     ax2.plot(t, self.data["magz"].rolling(10).mean()[::10], color="C3", label="magz")
+    #     ax2.tick_params(axis='y', labelcolor=color)
+    #     
+    #     lines, labels = ax1.get_legend_handles_labels()
+    #     lines2, labels2 = ax2.get_legend_handles_labels()
+    #     ax2.legend(lines + lines2, labels + labels2, loc='upper right')
+    #     
+    #     fig.tight_layout()
+    # 
+    #     if save == True:
+    #         new_filename = self.filename.stem + "_acc_mag" 
+    #         plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
+    #     if show == True:
+    #         plt.show()
+    #     plt.close()   
         
 class BDS100(Rapid):
     def __init__(self, filename: str, savecsv: bool = True, **kwargs) -> None:
@@ -422,7 +422,7 @@ if __name__ == "__main__":
         mymeas = BDS100(filename)
         _, summary_info = mymeas._process_and_save(True)
         mymeas.plot_data_overview()
-        mymeas.plot_acc_mag_overview()
+        # mymeas.plot_acc_mag_overview()
         mymeas.plot_pressure_overview()
         
         if "WARNING" in summary_info["messages"]:
@@ -461,7 +461,7 @@ if __name__ == "__main__":
         if "ERROR" in summary_info["messages"]:
             n_files_w_time_errors += 1
         
-        if "IMPACT" in summary_info["messages"]:
+        if "ACC" in summary_info["messages"]:
             n_files_w_impact += 1
         
         file_info = mymeas.parse_filename_info()
@@ -483,4 +483,4 @@ if __name__ == "__main__":
     print(f"{len(summary_data)}/{len(bds100_files) + len(bds250_files)} txt files processed")
     print(f"{n_files_w_pres_errors}/{len(summary_data)} contain pressure errors")
     print(f"{n_files_w_time_errors}/{len(summary_data)} contain time series errors")
-    print(f"{n_files_w_impact}/{len(summary_data)} contain impact >= 10g")
+    print(f"{n_files_w_impact}/{len(summary_data)} contain acceleration >= 100 m/s2")

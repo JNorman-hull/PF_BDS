@@ -140,8 +140,25 @@ delete_pycache()
 
 reticulate::source_python('./script/BDS_import.py')
 
+reticulate::source_python('./script/BDS_import_2.py')
+
 #4. BDS analysis functions####
 
+
+theme_JN <- function(base_size=10){ 
+  theme_grey() %+replace%
+    theme(
+      axis.text = element_text(colour="black"),
+      axis.title = element_text(colour="black"),
+      axis.ticks = element_line(colour="black"),
+      panel.border = element_rect(colour = "black", fill=NA),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      strip.background = element_rect(colour = "black",fill = NA),
+      panel.spacing.x = unit(12, "pt")
+    ) 
+}
 
 load_batch_summary <- function(batch_meta_dir) {
   cat("Loading batch summary file...\n")
@@ -174,6 +191,7 @@ load_batch_summary <- function(batch_meta_dir) {
   # Add 'processed' column as a factor with default value "N"
   batch_summary$pres_processed <- as.character("N")
   batch_summary$acc_processed <- as.character("N")
+  batch_summary$badsens <- as.character("N")
   
   cat("Batch summary loaded successfully.\n")
   return(batch_summary)
@@ -340,7 +358,7 @@ filter_batch_summary <- function(batch_summary, sample_rate) {
   
   #modify this to allow for either to be Y but not both
   sensors <- batch_summary %>%
-    filter(class == data_class & (pres_processed == "N" | acc_processed == "N")) %>%
+    filter(class == data_class & (pres_processed == "N" | acc_processed == "N")& badsens == "N") %>%
     select(file) %>%
     distinct()
   
@@ -880,6 +898,31 @@ time_normalization <- function(data, selected_sensor) {
   return(data)
 }
 
+update_global_environment <- function(data, batch_summary, sample_rate) {
+  if (sample_rate == 250) {
+    data_250hz <- data
+    assign("data_250hz", data_250hz, envir = .GlobalEnv)
+  } else if (sample_rate == 100) {
+    data_100hz <- data
+    assign("data_100hz", data_100hz, envir = .GlobalEnv)
+  }
+  assign("batch_summary", batch_summary, envir = .GlobalEnv)
+}
+
+check_sensor <- function(batch_summary, selected_sensor) {
+  is_sens_good <- readline(prompt = "Is sensor data appropriate for analysis? (Y/N): ")
+  
+  if (toupper(is_sens_good) == "Y") {
+    cat("Sensor data good\n")
+    return(TRUE)
+  } else {
+    cat("Sensor data not appropriate for analysis\n")
+    batch_summary <<- batch_summary %>%
+      mutate(badsens = ifelse(file == selected_sensor, "Y", badsens))
+    return(FALSE)
+  }
+}
+
 
 #BDS analysis tool prototype
 BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, sample_rate) {
@@ -906,6 +949,14 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, sample_rate) 
   #Draw plot for nadir value check
   plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 1)
   print(plotly_plot)
+  
+  #check_sensor function here
+  result <- check_sensor(batch_summary, selected_sensor)
+  
+  if (!result) {
+    cat("Stopping BDS anlysis...\n")
+  } else {
+    cat("Proceeding with BDS analysis...\n")
   
   #Process nadir value. User can input new value if needed
   batch_summary <- process_nadir_value(batch_summary, selected_sensor)
@@ -984,21 +1035,21 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, sample_rate) 
     mutate(pres_processed = ifelse(file == selected_sensor, "Y", pres_processed),
            acc_processed = ifelse(file == selected_sensor, "Y", acc_processed))
 
-  #Update global environment
-  if (sample_rate == 250) {
-    data_250hz <- data
-    assign("data_250hz", data_250hz, envir = .GlobalEnv)
-  } else if (sample_rate == 100) {
-    data_100hz <- data
-    assign("data_100hz", data_100hz, envir = .GlobalEnv)
   }
-  assign("batch_summary", batch_summary, envir = .GlobalEnv)
+  
+  if (!result) {
+    batch_summary <- batch_summary %>%
+      mutate(badsens = ifelse(file == selected_sensor, "Y", badsens))
+  }
+  
+  #Update global environment
+  update_global_environment(data, batch_summary, sample_rate)
   
   #BDS analysis complete. Prompt user to continue or end
   cat("BDS analysis complete for", selected_sensor, "\n")
     continue <- readline(prompt = "Continue with BDS analysis? (Y/N): ")
   if (toupper(continue) == "Y") {
-    plot_selected_sensor(batch_summary, data_250hz, data_100hz, sample_rate)
+    BDSAnalysisTool(batch_summary, data_250hz, data_100hz, sample_rate)
   } else {
     cat("BDS Analysis tool ended\n")
   }
