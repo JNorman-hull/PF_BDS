@@ -85,6 +85,11 @@ delete_pycache()
 # acc_5g = ((data['accmag'] >= 5) & (data['time'].diff().fillna(float('inf')) >= 0.02)).sum()
 
 
+#summary_data = data.iloc[::summary_interval].reset_index(drop=True)
+#enable saving for checking summary_data if needed
+#summary_csv_path = self.dir_csv / (self.filename.stem + "_summary.csv")
+#summary_data.to_csv(summary_csv_path, index=False)
+
 # summary_csv_path = self.dir_csv / (self.filename.stem + "_summary.csv")
 # summary_data.to_csv(summary_csv_path, index=False)
 
@@ -128,6 +133,40 @@ delete_pycache()
 #     plt.close()
 #     
 
+# def plot_acc_mag_overview(self, save: bool = True, show: bool = False) -> None:
+#     """Plot acceleration magnitude with magnetic flux for 100hz sensors."""
+#     t = self.data["time"][::10]
+#     
+#     fig, ax1 = plt.subplots(figsize=(25, 5))
+#     ax1.set_xlabel("time [s]")
+#     
+#     color = "C0"
+#     ax1.set_ylabel("Acceleration magnitude [g]", color=color)
+#     ax1.plot(t, self.data["accmag"].rolling(10).mean()[::10], color=color, label="Acceleration")
+#     ax1.tick_params(axis='y', labelcolor=color)
+#     ax1.ticklabel_format(useOffset=False)
+# 
+#     ax2 = ax1.twinx()
+#     color = "C1"
+#     ax2.set_ylabel("Magnetic flux density [mT]", color=color)
+#     ax2.plot(t, self.data["magx"].rolling(10).mean()[::10], color="C1", label="magx")
+#     ax2.plot(t, self.data["magy"].rolling(10).mean()[::10], color="C2", label="magy")
+#     ax2.plot(t, self.data["magz"].rolling(10).mean()[::10], color="C3", label="magz")
+#     ax2.tick_params(axis='y', labelcolor=color)
+#     
+#     lines, labels = ax1.get_legend_handles_labels()
+#     lines2, labels2 = ax2.get_legend_handles_labels()
+#     ax2.legend(lines + lines2, labels + labels2, loc='upper right')
+#     
+#     fig.tight_layout()
+# 
+#     if save == True:
+#         new_filename = self.filename.stem + "_acc_mag" 
+#         plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
+#     if show == True:
+#         plt.show()
+#     plt.close()   
+
 
 #3. BDS txt -> CSV conversion####
 
@@ -139,8 +178,6 @@ delete_pycache()
 #output files stored in ./csv and ./plots
 
 reticulate::source_python('./script/BDS_import.py')
-
-reticulate::source_python('./script/BDS_import_2.py')
 
 #4. BDS analysis functions####
 
@@ -227,31 +264,67 @@ process_data_250hz <- function(file_path, sample_rate, long_id, short_id) {
   return(data)
 }
 
-process_batch_files <- function(batch_meta_dir, bds100_dir, bds250_dir) {
+process_data_100_imp <- function(file_path, sample_rate, long_id, short_id) {
+  cat(paste("Processing RAPID 100hz IMP data file:", file_path, "\n"))
+  data <- read_csv(file_path, show_col_types = FALSE) %>%
+    mutate(
+      long_id = factor(long_id),  # sensor_id is set to the value of 'file' from batch_summary
+      short_id = factor(short_id), # short_id is set to the value of 'sensor' from batch_summary
+      sample_rate = factor(sample_rate),
+      time = as.numeric(`Time (s)`), 
+      pres = as.numeric(`Pressure (mbar)`), 
+      accmag = as.numeric(`Accel_Mag (g)`)
+    )%>%
+    select(-c('Time (s)', 'Pressure (mbar)', 'Accel_Mag (g)', 'P_Temp (C)', 'Battery (V)')
+           )
+  return(data)
+}
+
+process_batch_files <- function(batch_meta_dir, bds100_dir, bds250_dir, rapid_dir) {
   batch_summary <- load_batch_summary(batch_meta_dir)
   data_250hz <- tibble()
   data_100hz <- tibble()
+  data_100_imp <- tibble()
   cat("Processing batch files...\n")
+  
   for (i in seq_len(nrow(batch_summary))) {
     long_id <- batch_summary$file[i]
     short_id <- batch_summary$sensor[i]
-    sample_rate <- as.integer(gsub("hz", "", batch_summary$class[i]))
-    subdir <- ifelse(sample_rate == 250, bds250_dir, bds100_dir)
+    sample_rate <- batch_summary$class[i]
+    
+    if (sample_rate == "250hz") {
+      sample_rate_value <- 250
+      subdir <- bds250_dir
+    } else if (sample_rate == "100hz") {
+      sample_rate_value <- 100
+      subdir <- bds100_dir
+    } else if (sample_rate == "100_imp") {
+      sample_rate_value <- "100_imp"
+      subdir <- rapid_dir
+    } else {
+      cat("Invalid sample rate:", sample_rate, "\n")
+      next
+    }
+    
     file_path <- file.path(subdir, paste0(long_id, ".csv"))
     
     if (file.exists(file_path)) {
-      if (sample_rate == 250) {
-        data_250hz <- bind_rows(data_250hz, process_data_250hz(file_path, sample_rate, long_id, short_id))
-      } else if (sample_rate == 100) {
-        data_100hz <- bind_rows(data_100hz, process_data_100hz(file_path, sample_rate, long_id, short_id))
+      if (sample_rate_value == 250) {
+        data_250hz <- bind_rows(data_250hz, process_data_250hz(file_path, sample_rate_value, long_id, short_id))
+      } else if (sample_rate_value == 100) {
+        data_100hz <- bind_rows(data_100hz, process_data_100hz(file_path, sample_rate_value, long_id, short_id))
+      } else if (sample_rate_value == "100_imp") {
+        data_100_imp <- bind_rows(data_100_imp, process_data_100_imp(file_path, sample_rate_value, long_id, short_id))
       }
     } else {
       cat(paste("File not found:", file_path, "\n"))
     }
   }
+  
   assign("batch_summary", batch_summary, envir = .GlobalEnv)
   assign("data_250hz", data_250hz, envir = .GlobalEnv)
   assign("data_100hz", data_100hz, envir = .GlobalEnv)
+  assign("data_100_imp", data_100_imp, envir = .GlobalEnv)
   cat("Batch file processing completed.\n")
 }
 
@@ -293,12 +366,12 @@ subset_by_long_id <- function(data) {
   }
 }
 
-save_data <- function(batch_summary, data_100hz, data_250hz) {
-  # Check relevant data class (100 or 250)
-  cat("Enter the sample rate (100 or 250)\n")
+save_data <- function(batch_summary, data_100hz, data_250hz, data_100_imp) {
+  # Check relevant data class (100, 250, or 100_imp)
+  cat("Enter the sample rate (100, 250, or 100_imp)\n")
   sample_rate <- readline(prompt = "Sample rate: ")
-  if (!sample_rate %in% c("100", "250")) {
-    stop("Invalid sample rate. Please enter either 100 or 250.")
+  if (!sample_rate %in% c("100", "250", "100_imp")) {
+    stop("Invalid sample rate. Please enter 100, 250, or 100_imp.")
   }
   
   # Check if pres_processed and acc_processed all = Y
@@ -333,11 +406,13 @@ save_data <- function(batch_summary, data_100hz, data_250hz) {
     data_to_save <- data_100hz %>% filter(!is.na(passage_point))
   } else if (sample_rate == "250") {
     data_to_save <- data_250hz %>% filter(!is.na(passage_point))
+  } else if (sample_rate == "100_imp") {
+    data_to_save <- data_100_imp %>% filter(!is.na(passage_point))
   } else {
     stop("Invalid sample rate.")
   }
   
-  data_file <- file.path(output_dir, paste0(batch_name, "_data_", sample_rate, "hz.csv"))
+  data_file <- file.path(output_dir, paste0(batch_name, "_data_", sample_rate, ".csv"))
   write.csv(data_to_save, data_file, row.names = FALSE)
   
   cat("Files saved successfully.\n")
@@ -350,15 +425,18 @@ filter_batch_summary <- function(batch_summary, sample_rate) {
   } else if (sample_rate == 100) {
     data_class <- "100hz"
     num_rows <- 96
+  } else if (sample_rate == "100_imp") {
+    data_class <- "100_imp"
+    num_rows <- 96
   } else {
     stop("Invalid sample rate")
   }
   
-  #num_rows is 96 for both sensors as 96 rows = 1s. Only included for future redundancy 
+  # num_rows is 96 for both sensors as 96 rows = 1s. Only included for future redundancy 
   
-  #modify this to allow for either to be Y but not both
+  # Modify this to allow for either to be Y but not both
   sensors <- batch_summary %>%
-    filter(class == data_class & (pres_processed == "N" | acc_processed == "N")& badsens == "N") %>%
+    filter(class == data_class & (pres_processed == "N" | acc_processed == "N") & badsens == "N") %>%
     select(file) %>%
     distinct()
   
@@ -905,6 +983,9 @@ update_global_environment <- function(data, batch_summary, sample_rate) {
   } else if (sample_rate == 100) {
     data_100hz <- data
     assign("data_100hz", data_100hz, envir = .GlobalEnv)
+  } else if (sample_rate == "100_imp") {
+    data_100_imp <- data
+    assign("data_100_imp", data_100_imp, envir = .GlobalEnv)
   }
   assign("batch_summary", batch_summary, envir = .GlobalEnv)
 }
@@ -925,8 +1006,8 @@ check_sensor <- function(batch_summary, selected_sensor) {
 
 
 #BDS analysis tool prototype
-BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, sample_rate) {
-
+BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp, sample_rate) {
+  
   filter_result <- filter_batch_summary(batch_summary, sample_rate)
   if (!is.null(filter_result$message)) {
     cat(filter_result$message)
@@ -934,107 +1015,113 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, sample_rate) 
     return(invisible())
   }
   
-  data <- if (sample_rate == 250) data_250hz else data_100hz
+  # Update the data assignment logic
+  data <- if (sample_rate == 250) {
+    data_250hz
+  } else if (sample_rate == 100) {
+    data_100hz
+  } else if (sample_rate == "100_imp") {
+    data_100_imp
+  }
   
-  #Create list of sensors available for processing. 
-  #Add num_rows for calculating max pressure <1s nadir
+  # Create list of sensors available for processing.
+  # Add num_rows for calculating max pressure <1s nadir
   sensors <- filter_result$sensors
   num_rows <- filter_result$num_rows
-  #Prompt user to select a sensor
+  # Prompt user to select a sensor
   selected_sensor <- prompt_user_to_select_sensor(sensors)
-  #Create sensor summary
+  # Create sensor summary
   sensor_summary <- batch_summary %>% filter(file == selected_sensor)
   time_range <- max(data$time) - min(data$time)
-
-  #Draw plot for nadir value check
+  
+  # Draw plot for nadir value check
   plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 1)
   print(plotly_plot)
   
-  #check_sensor function here
+  # check_sensor function here
   result <- check_sensor(batch_summary, selected_sensor)
   
   if (!result) {
-    cat("Stopping BDS anlysis...\n")
+    cat("Stopping BDS analysis...\n")
   } else {
     cat("Proceeding with BDS analysis...\n")
-  
-  #Process nadir value. User can input new value if needed
-  batch_summary <- process_nadir_value(batch_summary, selected_sensor)
-  
-  #Calculate max pressure within 1s before the nadir
-  batch_summary <- calculate_max_pressure_before_nadir(data, batch_summary, selected_sensor, num_rows)
-
-  #Update plot with new nadir value and 1s max pressure
-  sensor_summary <- batch_summary %>% filter(file == selected_sensor)
-  plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 2, num_rows)
-  print(plotly_plot)
-  
-  #Process 1s max nadir value. User can input new value if needed
-  batch_summary <- process_max_p_1s_nadir(batch_summary, selected_sensor)
-  
-  #Calculate rate pressure change
-  batch_summary <- calculate_rate_pressure_change(batch_summary, selected_sensor)
-  
-  cat("Enter maximum acclimation pressure (e.g., atmospheric pressure or static pressure within system)\n")
-  max_acclim <- as.numeric(readline(prompt = "Maximum acclimation pressure: "))
-  if (is.na(max_acclim)) {
-    stop("Invalid maximum acclimation pressure")
-  }
-  
-  #Calculate ratio pressure change and log ratio pressure change
-  batch_summary <- calculate_ratio_pressure_change(batch_summary, selected_sensor, max_acclim)
-  
-  #Calculate acceleration peaks
-  batch_summary <- find_acceleration_peaks(data, batch_summary, selected_sensor)
-
-  #Draw plot for acceleration magnitude 
-  #First update sensor_summary and ensure accmag_ NA columns are dropped from other sensors
-  sensor_summary <- batch_summary %>%
-    filter(file == selected_sensor) %>%
-    select_if(~ any(!is.na(.)))
-  plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 3)
-  print(plotly_plot)
-  
-  #Prompt user to continue with injection and tailwater selection
-  continue_injection <- readline(prompt = "Enter Y when ready to continue with injection and tailwater selection: ")
-  if (toupper(continue_injection) != "Y") {
-    cat("BDS analysis tool ended.\n")
-    return(invisible())
-  }
-
-  #Draw plot for ROI selection
-  plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 4)
-  print(plotly_plot)
-  
-  #Prompt user to enter injection and tailwater time
-  batch_summary <- prompt_for_injection_tailwater_times(batch_summary, selected_sensor)
-  
-  #Assign passage points
-  data <- assign_passage_points(data, batch_summary, selected_sensor, sample_rate)
-  
-  #Draw plot with updated passage points
-  plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 5)
-  print(plotly_plot)
-  
-  #Prompt user to continue with time series normalization
-  continue_normal<- readline(prompt = "Enter Y when ready to continue with passage time series normalization: ")
-  if (toupper(continue_normal) != "Y") {
-    cat("BDS analysis tool ended.\n")
-    return(invisible())
-  }
-
-  #Perform time series normalization and update data
-  data <- time_normalization(data, selected_sensor)
-
-  #Draw plot with normalized passage
-  plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 6)
-  print(plotly_plot)
-
-  #Update batch summary with processed status
-  batch_summary <- batch_summary %>%
-    mutate(pres_processed = ifelse(file == selected_sensor, "Y", pres_processed),
-           acc_processed = ifelse(file == selected_sensor, "Y", acc_processed))
-
+    
+    # Process nadir value. User can input new value if needed
+    batch_summary <- process_nadir_value(batch_summary, selected_sensor)
+    
+    # Calculate max pressure within 1s before the nadir
+    batch_summary <- calculate_max_pressure_before_nadir(data, batch_summary, selected_sensor, num_rows)
+    
+    # Update plot with new nadir value and 1s max pressure
+    sensor_summary <- batch_summary %>% filter(file == selected_sensor)
+    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 2, num_rows)
+    print(plotly_plot)
+    
+    # Process 1s max nadir value. User can input new value if needed
+    batch_summary <- process_max_p_1s_nadir(batch_summary, selected_sensor)
+    
+    # Calculate rate pressure change
+    batch_summary <- calculate_rate_pressure_change(batch_summary, selected_sensor)
+    
+    cat("Enter maximum acclimation pressure (e.g., atmospheric pressure or static pressure within system)\n")
+    max_acclim <- as.numeric(readline(prompt = "Maximum acclimation pressure: "))
+    if (is.na(max_acclim)) {
+      stop("Invalid maximum acclimation pressure")
+    }
+    
+    # Calculate ratio pressure change and log ratio pressure change
+    batch_summary <- calculate_ratio_pressure_change(batch_summary, selected_sensor, max_acclim)
+    
+    # Calculate acceleration peaks
+    batch_summary <- find_acceleration_peaks(data, batch_summary, selected_sensor)
+    
+    # Draw plot for acceleration magnitude 
+    # First update sensor_summary and ensure accmag_ NA columns are dropped from other sensors
+    sensor_summary <- batch_summary %>%
+      filter(file == selected_sensor) %>%
+      select_if(~ any(!is.na(.)))
+    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 3)
+    print(plotly_plot)
+    
+    # Prompt user to continue with injection and tailwater selection
+    continue_injection <- readline(prompt = "Enter Y when ready to continue with injection and tailwater selection: ")
+    if (toupper(continue_injection) != "Y") {
+      cat("BDS analysis tool ended.\n")
+      return(invisible())
+    }
+    
+    # Draw plot for ROI selection
+    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 4)
+    print(plotly_plot)
+    
+    # Prompt user to enter injection and tailwater time
+    batch_summary <- prompt_for_injection_tailwater_times(batch_summary, selected_sensor)
+    
+    # Assign passage points
+    data <- assign_passage_points(data, batch_summary, selected_sensor, sample_rate)
+    
+    # Draw plot with updated passage points
+    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 5)
+    print(plotly_plot)
+    
+    # Prompt user to continue with time series normalization
+    continue_normal <- readline(prompt = "Enter Y when ready to continue with passage time series normalization: ")
+    if (toupper(continue_normal) != "Y") {
+      cat("BDS analysis tool ended.\n")
+      return(invisible())
+    }
+    
+    # Perform time series normalization and update data
+    data <- time_normalization(data, selected_sensor)
+    
+    # Draw plot with normalized passage
+    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 6)
+    print(plotly_plot)
+    
+    # Update batch summary with processed status
+    batch_summary <- batch_summary %>%
+      mutate(pres_processed = ifelse(file == selected_sensor, "Y", pres_processed),
+             acc_processed = ifelse(file == selected_sensor, "Y", acc_processed))
   }
   
   if (!result) {
@@ -1042,16 +1129,16 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, sample_rate) 
       mutate(badsens = ifelse(file == selected_sensor, "Y", badsens))
   }
   
-  #Update global environment
+  # Update global environment
   update_global_environment(data, batch_summary, sample_rate)
   
-  #BDS analysis complete. Prompt user to continue or end
+  # BDS analysis complete. Prompt user to continue or end
   cat("BDS analysis complete for", selected_sensor, "\n")
-    continue <- readline(prompt = "Continue with BDS analysis? (Y/N): ")
+  continue <- readline(prompt = "Continue with BDS analysis? (Y/N): ")
   if (toupper(continue) == "Y") {
-    BDSAnalysisTool(batch_summary, data_250hz, data_100hz, sample_rate)
+    BDSAnalysisTool(batch_summary, data_250hz, data_100hz, data_100_imp, sample_rate)
   } else {
     cat("BDS Analysis tool ended\n")
   }
-  #End of BDS analysis   
+  # End of BDS analysis   
 }

@@ -74,6 +74,7 @@ class Rapid(ABC):
             'time_deploy': time_deploy
         }
 
+
     @abstractmethod
     def _class_specific_config(self) -> Tuple[int, list[str]]:
         """Provide summary interval and relevant fields."""
@@ -153,21 +154,18 @@ class Rapid(ABC):
         minutes, seconds = divmod(num_seconds, 60)
         duration = f"{minutes:02}:{seconds:02}"
 
-        #summary_data = data.iloc[::summary_interval].reset_index(drop=True)
-        #enable saving for checking summary_data if needed
-        #summary_csv_path = self.dir_csv / (self.filename.stem + "_summary.csv")
-        #summary_data.to_csv(summary_csv_path, index=False)
-        
-        #consider 10g as an injury severity limit
-        max_acc_g_force = data['accmag'].max() / 9.81
-        if max_acc_g_force >= 10:
+        #consider 100 m/s2 as an impact indicator
+        max_acc_g_force = data['accmag'].max()
+        if max_acc_g_force >= 100:
             acc_warning = "ACC: Acceleration event >= 100 m/s2 detected"
         else:
             acc_warning = ""
 
         pres_min_index = data['pres'].idxmin()
         pres_min_time = data['time'][pres_min_index]
-        acc_max_index = data['accmag'].idxmin()
+        pres_max_index = data['pres'].idxmax()
+        pres_max_time = data['time'][pres_max_index]
+        acc_max_index = data['accmag'].idxmax()
         acc_max_time = data['time'][acc_max_index]
         
         unchanged_sensors = [sensor for sensor, is_valid in valid_sensors.items() if not is_valid]
@@ -190,18 +188,14 @@ class Rapid(ABC):
             'pres_min[mbar]': data['pres'].min(),
             'pres_min[time]': pres_min_time,
             'pres_max[mbar]': data['pres'].max(),
+            'pres_max[time]': pres_max_time,
             'acc_max[m/s2]': data['accmag'].max(),
             'acc_max[time]': acc_max_time,
-            'max_impact[g-force]': max_acc_g_force,
-            'n.acc>5g': self.count_threshold_exceedances(data, 'accmag', 49.03),
-            'n.acc>10g': self.count_threshold_exceedances(data, 'accmag', 98.07),
-            'n.acc>30g': self.count_threshold_exceedances(data, 'accmag', 294.20),
-            'n.acc>50g': self.count_threshold_exceedances(data, 'accmag', 490.33),
             'messages': warning_message
         }
 
         return data, summary_info
-
+      
     def plot_data_overview(self, save: bool = True, show: bool = False) -> None:
         """Plots an overview for the generated data.
         This is primarily to spot problems before further user-processing.
@@ -215,10 +209,18 @@ class Rapid(ABC):
         show : bool
             Show an interactive plot when executed, by default False
         """
+        # Determine if the data is from IMP format
+        is_imp = "Accel_Mag (g)" in self.data.columns
+        
         t = self.data["time"][::10]
-        pres = self.data["pres"].rolling(10).mean()[::10] 
-        accmag = self.data["accmag"].rolling(10).mean()[::10] 
-
+        
+        if is_imp:
+            pres = self.data["Pressure (mbar)"].rolling(10).mean()[::10]
+            accmag = self.data["Accel_Mag (g)"].rolling(10).mean()[::10]
+        else:
+            pres = self.data["pres"].rolling(10).mean()[::10]
+            accmag = self.data["accmag"].rolling(10).mean()[::10]
+        
         color = "C0"
         fig, ax1 = plt.subplots(figsize=(25, 5))
         ax1.set_xlabel("time [s]")
@@ -282,40 +284,7 @@ class Rapid(ABC):
             plt.show()
         plt.close() 
         
-    # def plot_acc_mag_overview(self, save: bool = True, show: bool = False) -> None:
-    #     """Plot acceleration magnitude with magnetic flux for 100hz sensors."""
-    #     t = self.data["time"][::10]
-    #     
-    #     fig, ax1 = plt.subplots(figsize=(25, 5))
-    #     ax1.set_xlabel("time [s]")
-    #     
-    #     color = "C0"
-    #     ax1.set_ylabel("Acceleration magnitude [g]", color=color)
-    #     ax1.plot(t, self.data["accmag"].rolling(10).mean()[::10], color=color, label="Acceleration")
-    #     ax1.tick_params(axis='y', labelcolor=color)
-    #     ax1.ticklabel_format(useOffset=False)
-    # 
-    #     ax2 = ax1.twinx()
-    #     color = "C1"
-    #     ax2.set_ylabel("Magnetic flux density [mT]", color=color)
-    #     ax2.plot(t, self.data["magx"].rolling(10).mean()[::10], color="C1", label="magx")
-    #     ax2.plot(t, self.data["magy"].rolling(10).mean()[::10], color="C2", label="magy")
-    #     ax2.plot(t, self.data["magz"].rolling(10).mean()[::10], color="C3", label="magz")
-    #     ax2.tick_params(axis='y', labelcolor=color)
-    #     
-    #     lines, labels = ax1.get_legend_handles_labels()
-    #     lines2, labels2 = ax2.get_legend_handles_labels()
-    #     ax2.legend(lines + lines2, labels + labels2, loc='upper right')
-    #     
-    #     fig.tight_layout()
-    # 
-    #     if save == True:
-    #         new_filename = self.filename.stem + "_acc_mag" 
-    #         plt.savefig((self.dir_plots / new_filename).with_suffix(".png"))
-    #     if show == True:
-    #         plt.show()
-    #     plt.close()   
-        
+
 class BDS100(Rapid):
     def __init__(self, filename: str, savecsv: bool = True, **kwargs) -> None:
         """This class processes BDS measurements at 100 Hz. 
@@ -405,13 +374,289 @@ class BDS250(Rapid):
     def _class_specific_config(self) -> Tuple[int, list[str]]:
         return 96, ["time", "pres", "P1", "P2", "P3", "accmag"]
     #96 rows = 1s. Even when sensor set to 250hz, data log is at 100hz
+    
+class IMP(Rapid):
+    def __init__(self, filename: str, savecsv: bool = True, **kwargs) -> None:
+        super().__init__(filename)
+        self.dir_csv = self.dir_csv / "RAPID_IMP"
+        self.dir_plots = self.dir_plots / "RAPID_IMP"
+        self.class_name = "100_imp"
+        self.packetSize = 29
+        self.FS = 2000
+        self.IMU_PREC = 3
+        self.P_PREC = 1
+        self.T_BAT_PREC = 2
+        self.gain_ac = 0.005 #/ 9.81
+        self.gain_gy = 0.1
+        self.gain_mg = 0.1
+        self.gain_pr = 0.1
+        self.gain_t = 0.01
+        self.gain_bt = 0.01
+        self.column_names_raw = [
+            'Time (s)', 'Accel_X (g)', 'Accel_Y (g)', 'Accel_Z (g)', 'Accel_Mag (g)',
+            'Gyro_X (deg/s)', 'Gyro_Y (deg/s)', 'Gyro_Z (deg/s)', 'Mag_X (mT)',
+            'Mag_Y (mT)', 'Mag_Z (mT)', 'Pressure (mbar)', 'P_Temp (C)', 'Battery (V)'
+        ]
+        self.data, _ = self._process_and_save(savecsv, **kwargs)
+
+    def _class_specific_config(self) -> Tuple[int, list[str]]:
+        return 96, self.column_names_raw
+
+    def _read_data(self) -> pd.DataFrame:
+        with open(self.filename.as_posix(), 'rb') as file_ID:
+            fstat = os.stat(self.filename)
+            flen = (fstat.st_size // self.packetSize) - 1
+
+            TimeRaw = []
+            TimeSpot = []
+
+            for _ in range(flen):
+                time_raw = struct.unpack('>i', file_ID.read(4))[0]
+                TimeRaw.append(time_raw)
+                TimeSpot.append(file_ID.tell())
+                file_ID.seek(25, 1)
+
+            DataRaw = np.zeros((flen, 12), dtype=np.int16)
+            DataRawP = np.zeros(flen, dtype=np.uint16)
+
+            for it in range(flen):
+                if it == 0:
+                    file_ID.seek(4, 0)
+                else:
+                    DataRaw[it, 0] = struct.unpack('>h', file_ID.read(2))[0]
+                    DataRaw[it, 1] = struct.unpack('>h', file_ID.read(2))[0]
+                    DataRaw[it, 2] = struct.unpack('>h', file_ID.read(2))[0]
+                    DataRaw[it, 3] = struct.unpack('>h', file_ID.read(2))[0]
+                    DataRaw[it, 4] = struct.unpack('>h', file_ID.read(2))[0]
+                    DataRaw[it, 5] = struct.unpack('>h', file_ID.read(2))[0]
+                    DataRaw[it, 6] = struct.unpack('>h', file_ID.read(2))[0]
+                    DataRaw[it, 7] = struct.unpack('>h', file_ID.read(2))[0]
+                    DataRaw[it, 8] = struct.unpack('>h', file_ID.read(2))[0]
+                    file_ID.seek(2, 1)
+                    DataRaw[it, 9] = struct.unpack('>h', file_ID.read(2))[0]
+                    DataRaw[it, 10] = struct.unpack('>h', file_ID.read(2))[0]
+                    file_ID.seek(5, 1)
+
+            DataRaw[0, :] = DataRaw[1, :]
+
+            for it in range(flen):
+                if it == 0:
+                    file_ID.seek(TimeSpot[0] + 4 + (2 * 7), 0)
+                else:
+                    DataRawP[it] = struct.unpack('>H', file_ID.read(2))[0]
+                    file_ID.seek(27, 1)
+
+            DataRawP[0] = DataRawP[1]
+
+            RAPIDIMP = {
+                'td': np.array(TimeRaw, dtype=np.float64),
+                'ts': np.array(TimeRaw, dtype=np.float64) / self.FS,
+                'ax': np.round(DataRaw[:, 0] * self.gain_ac, self.IMU_PREC),
+                'ay': np.round(DataRaw[:, 1] * self.gain_ac, self.IMU_PREC),
+                'az': np.round(DataRaw[:, 2] * self.gain_ac, self.IMU_PREC),
+                'gx': np.round(DataRaw[:, 3] * self.gain_gy, self.IMU_PREC),
+                'gy': np.round(DataRaw[:, 4] * self.gain_gy, self.IMU_PREC),
+                'gz': np.round(DataRaw[:, 5] * self.gain_gy, self.IMU_PREC),
+                'mx': np.round(DataRaw[:, 6] * self.gain_mg, self.IMU_PREC),
+                'my': np.round(DataRaw[:, 7] * self.gain_mg, self.IMU_PREC),
+                'mz': np.round(DataRaw[:, 8] * self.gain_mg, self.IMU_PREC),
+                'p': np.round(DataRawP * self.gain_pr, self.P_PREC),
+                't': np.round(DataRaw[:, 9] * self.gain_t, self.T_BAT_PREC),
+                'b': np.round(DataRaw[:, 10] * self.gain_bt, self.T_BAT_PREC)
+            }
+
+            aMag = np.round(np.sqrt(RAPIDIMP['ax'] ** 2 + RAPIDIMP['ay'] ** 2 + RAPIDIMP['az'] ** 2) -9.81, self.IMU_PREC)
+            
+            dataExportCSV = np.column_stack((
+                RAPIDIMP['ts'], RAPIDIMP['ax'], RAPIDIMP['ay'], RAPIDIMP['az'], aMag,
+                RAPIDIMP['gx'], RAPIDIMP['gy'], RAPIDIMP['gz'], RAPIDIMP['mx'], RAPIDIMP['my'],
+                RAPIDIMP['mz'], RAPIDIMP['p'], RAPIDIMP['t'], RAPIDIMP['b']
+            ))
+
+            return pd.DataFrame(dataExportCSV, columns=self.column_names_raw)
+
+    def _post_process(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, dict[str, float]]:
+        # Calculate duration
+        data["time"] = data["Time (s)"]
+        num_seconds = len(data) // 100
+        minutes, seconds = divmod(num_seconds, 60)
+        duration = f"{int(minutes):02}:{int(seconds):02}"
+
+        # Find min and max pressure times
+        pres_min_index = data['Pressure (mbar)'].idxmin()
+        pres_min_time = data['Time (s)'][pres_min_index]
+        pres_max_index = data['Pressure (mbar)'].idxmax()
+        pres_max_time = data['Time (s)'][pres_max_index]
+
+        # Find max acceleration time
+        acc_max_index = data['Accel_Mag (g)'].idxmax()
+        acc_max_time = data['Time (s)'][acc_max_index]
+        
+        if data["time"].max() >= 5000:
+            time_warning = "ERROR: Time series incorrect. Data cannot be used."
+        else:
+            time_warning = ""
+            
+        #consider 100 m/s2 as an impact indicator
+        max_acc_g_force = data['Accel_Mag (g)'].max()
+        if max_acc_g_force >= 100:
+            acc_warning = "ACC: Acceleration event >= 100 m/s2 detected"
+        else:
+            acc_warning = ""
+
+        warning_message = "No errors detected"
+        if time_warning or acc_warning:
+            warning_message = "; ".join(filter(None, [time_warning, acc_warning]))
+            
+        # Summary information specific to IMP
+        summary_info = {
+            'duration[mm:ss]': duration,
+            'pres_min[mbar]': data['Pressure (mbar)'].min(),
+            'pres_min[time]': pres_min_time,
+            'pres_max[mbar]': data['Pressure (mbar)'].max(),
+            'pres_max[time]': pres_max_time,
+            'acc_max[m/s2]': data['Accel_Mag (g)'].max(),
+            'acc_max[time]': acc_max_time,
+            'messages': warning_message
+        }
+        return data, summary_info
+      
+    def parse_filename_info(self) -> dict:
+        """Extracts the sensor name, date, and time from the filename."""
+        filename = self.filename.stem  # Use stem to avoid the file extension
+
+       # Assuming a filename format like 'B80-0612182322' for IMP files
+        if '-' in filename:
+            sensor, date_time = filename.split('-')
+        else:
+            sensor = filename[:3]
+            date_time = filename[3:]
+
+        date_str = date_time[:4]  # Characters 1 to 6 are the date in DDMMYY format
+        time_str = date_time[4:]  # Characters 7 to 12 are the time in HHMMSS format
+
+        date_deploy = datetime.strptime(date_str, "%m%d").strftime("%d/%m")
+        time_deploy = f"{time_str[:2]}:{time_str[2:4]}:{time_str[4:]}"
+
+        return {
+            'sensor': sensor,
+            'date_deploy': date_deploy,
+            'time_deploy': time_deploy
+        }
+        
+class HIG(Rapid):
+    def __init__(self, filename: str, savecsv: bool = True, **kwargs) -> None:
+        super().__init__(filename)
+        self.dir_csv = self.dir_csv / "RAPID_HIG"
+        self.dir_plots = self.dir_plots / "RAPID_HIG"
+        self.class_name = "100_hig"
+        self.packetSize = 11
+        self.FS = 2000
+        self.HIG_PREC = 1
+        self.gain_hig = 0.1
+        self.column_names_raw = [
+            'Time (s)', 'HIGAccel_X (g)', 'HIGAccel_Y (g)', 'HIGAccel_Z (g)', 'HIGAccel_Mag (g)'
+        ]
+        self.data, _ = self._process_and_save(savecsv, **kwargs)
+
+    def _class_specific_config(self) -> Tuple[int, list[str]]:
+        return 2000, self.column_names_raw
+
+    def _read_data(self) -> pd.DataFrame:
+        with open(self.filename.as_posix(), 'rb') as file_ID:
+            fstat = os.stat(self.filename)
+            flen = fstat.st_size // self.packetSize
+
+            TimeRaw = []
+            DataRaw = np.zeros((flen, 3), dtype=np.int16)
+            
+            for it in range(flen):
+                packet = file_ID.read(self.packetSize)
+                
+                time_raw = struct.unpack('>I', packet[:4])[0]
+                TimeRaw.append(time_raw)
+
+                DataRaw[it, 0] = struct.unpack('>h', packet[4:6])[0]  # acc X
+                DataRaw[it, 1] = struct.unpack('>h', packet[6:8])[0]  # acc Y
+                DataRaw[it, 2] = struct.unpack('>h', packet[8:10])[0]  # acc Z
+                
+            TimeRaw = np.array(TimeRaw, dtype=np.float64)
+            ts = TimeRaw / self.FS
+            ax = np.round(DataRaw[:, 0] * self.gain_hig, self.HIG_PREC)
+            ay = np.round(DataRaw[:, 1] * self.gain_hig, self.HIG_PREC)
+            az = np.round(DataRaw[:, 2] * self.gain_hig, self.HIG_PREC)
+            aMag = np.round(np.sqrt(ax ** 2 + ay ** 2 + az ** 2), self.HIG_PREC)
+
+            dataExportCSV = np.column_stack((ts, ax, ay, az, aMag))
+            return pd.DataFrame(dataExportCSV, columns=self.column_names_raw)
+          
+    def _post_process(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, dict[str, float]]:
+        # Calculate duration
+        data["time"] = data["Time (s)"]
+        num_seconds = len(data) / self.FS
+        minutes, seconds = divmod(num_seconds, 60)
+        duration = f"{int(minutes):02}:{int(seconds):02}"
+
+        # Find max acceleration time
+        acc_max_index = data['HIGAccel_Mag (g)'].idxmax()
+        acc_max_time = data['Time (s)'][acc_max_index]
+
+        if data["time"].max() >= 5000:
+            time_warning = "ERROR: Time series incorrect. Data cannot be used."
+        else:
+            time_warning = ""
+
+        # Check for acceleration warning
+        max_acc_g_force = data['HIGAccel_Mag (g)'].max()
+        if max_acc_g_force >= 100:
+            acc_warning = "HIG event >= 100 g detected"
+        else:
+            acc_warning = ""
+
+        # Warning message
+        warning_message = ""
+        if time_warning or acc_warning:
+            warning_message = "; ".join(filter(None, [time_warning, acc_warning]))
+
+        # Summary information specific to HIG
+        summary_info = {
+            'duration[mm:ss]': duration,
+            'HIG_max[g]': max_acc_g_force,
+            'HIG_max[time]': acc_max_time,
+            'messages': warning_message
+        }
+        return data, summary_info
+      
+    def parse_filename_info(self) -> dict:
+        """Extracts the sensor name, date, and time from the filename."""
+        filename = self.filename.stem  # Use stem to avoid the file extension
+
+       # Assuming a filename format like 'B80-0612182322' for HIG files
+        if '-' in filename:
+            sensor, date_time = filename.split('-')
+        else:
+            sensor = filename[:3]
+            date_time = filename[3:]
+
+        date_str = date_time[:4]  # Characters 1 to 6 are the date in DDMMYY format
+        time_str = date_time[4:]  # Characters 7 to 12 are the time in HHMMSS format
+
+        date_deploy = datetime.strptime(date_str, "%m%d").strftime("%d/%m")
+        time_deploy = f"{time_str[:2]}:{time_str[2:4]}:{time_str[4:]}"
+
+        return {
+            'sensor': sensor,
+            'date_deploy': date_deploy,
+            'time_deploy': time_deploy
+        }
 
 if __name__ == "__main__":
     current_date = datetime.now().strftime("%d%m%y")
     summary_data = []
     n_files_w_pres_errors = 0
     n_files_w_time_errors = 0
-    n_files_w_impact = 0
+    n_files_w_acc = 0
+    n_files_w_hig = 0
 
 #Process BDS100 files
     bds100_files = list(Path("./RAW_data/BDS_100").glob("*.txt"))
@@ -431,8 +676,8 @@ if __name__ == "__main__":
         if "ERROR" in summary_info["messages"]:
             n_files_w_time_errors += 1
             
-        if "IMPACT" in summary_info["messages"]:
-            n_files_w_impact += 1
+        if "ACC" in summary_info["messages"]:
+            n_files_w_acc += 1
         
         file_info = mymeas.parse_filename_info()
         summary_data.append({
@@ -462,7 +707,7 @@ if __name__ == "__main__":
             n_files_w_time_errors += 1
         
         if "ACC" in summary_info["messages"]:
-            n_files_w_impact += 1
+            n_files_w_acc += 1
         
         file_info = mymeas.parse_filename_info()
         summary_data.append({
@@ -473,14 +718,66 @@ if __name__ == "__main__":
         })
         print(f"{filename.name} complete")
         
+# Process IMP files
+    imp_files = list(Path("./RAW_data/RAPID").glob("*.IMP"))
+    print(f"Processing {len(imp_files)} RAPID IMP files...")
+    for f in imp_files:
+        filename = f
+        print(f"Processing {filename.name}")
+        mymeas = IMP(filename)
+        _, summary_info = mymeas._process_and_save(True)
+        mymeas.plot_data_overview()
+
+        if "ERROR" in summary_info["messages"]:
+            n_files_w_time_errors += 1
+        
+        if "ACC" in summary_info["messages"]:
+            n_files_w_acc += 1
+    
+        file_info = mymeas.parse_filename_info()
+        summary_data.append({
+            'file': filename.stem,
+            'class': mymeas.class_name,
+            **file_info,
+            **summary_info
+        })
+        print(f"{filename.name} complete")
+        
+        # Process HIG files
+    hig_files = list(Path("./RAW_data/RAPID").glob("*.HIG"))
+    print(f"Processing {len(hig_files)} RAPID HIG files...")
+    for f in hig_files:
+        filename = f
+        print(f"Processing {filename.name}")
+        mymeas = HIG(filename)
+        _, summary_info = mymeas._process_and_save(True)
+
+        if "ERROR" in summary_info["messages"]:
+            n_files_w_time_errors += 1
+        
+        if "HIG" in summary_info["messages"]:
+            n_files_w_hig += 1
+
+        file_info = mymeas.parse_filename_info()
+        summary_data.append({
+        'file': filename.stem,
+        'class': mymeas.class_name,
+        **file_info,
+        **summary_info
+        })
+        print(f"{filename.name} complete")
+
 #Create summary CSV
     summary_df = pd.DataFrame(summary_data)
     summary_csv_filename = f"{current_date}_batch_summary.csv"
     summary_csv_path = Path("csv") / summary_csv_filename
     summary_df.to_csv(summary_csv_path, index=False)
     
-    print("Operation complete.")
-    print(f"{len(summary_data)}/{len(bds100_files) + len(bds250_files)} txt files processed")
-    print(f"{n_files_w_pres_errors}/{len(summary_data)} contain pressure errors")
-    print(f"{n_files_w_time_errors}/{len(summary_data)} contain time series errors")
-    print(f"{n_files_w_impact}/{len(summary_data)} contain acceleration >= 100 m/s2")
+    print("Batch sensor processing complete.")
+    print(f"{len(bds100_files) + len(bds250_files) + len(imp_files) + len(hig_files)} total sensor files processed")
+    print(f"{len(bds100_files) + len(bds250_files)} BDS files processed")
+    print(f"{len(imp_files) + len(hig_files)} RAPID sensor files processed")
+    print(f"{n_files_w_pres_errors}/{len(bds100_files) + len(bds250_files)} BDS files contain pressure errors")
+    print(f"{n_files_w_time_errors}/{len(summary_data)} sensor files contain time series errors")
+    print(f"{n_files_w_acc}/{len(bds100_files) + len(bds250_files) + len(imp_files)} BDS/RAPID IMU contain acceleration >= 100 m/s2")
+    print(f"{n_files_w_hig}/{len(hig_files)} RAPID HIG contain events >= 100g")

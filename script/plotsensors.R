@@ -1,7 +1,8 @@
 batch_summary <-batch_summary %>%
   mutate(plotted = "N")
 
-plot_sensors <- function(data_100hz) {
+#run this function then save environment next time
+plot_sensors <- function(data_100hz, data_250hz, data_100_imp, sample_rate) {
   batch_summary <- get("batch_summary", envir = .GlobalEnv)
   
   # Initialize 'plotted' if it doesn't exist
@@ -10,14 +11,14 @@ plot_sensors <- function(data_100hz) {
   }
   
   repeat {
-    # Identify sensors
+    # Identify sensors based on sample rate
     sensors <- batch_summary %>%
-      filter(plotted == "N"& (pres_processed == "Y" | acc_processed == "Y")) %>%
+      filter(plotted == "N" & (pres_processed == "Y" | acc_processed == "Y") & class == sample_rate) %>%
       pull(file) %>%
       unique()
     
     if (length(sensors) == 0) {
-      cat("All sensors plotted\n")
+      cat("All sensors plotted for sample rate", sample_rate, "\n")
       cat("Plotting processes ended\n")
       break
     }
@@ -43,9 +44,29 @@ plot_sensors <- function(data_100hz) {
     
     for (sensor in sensors_to_plot) {
       cat("Plotting pressure and acceleration for sensor", sensor, "\n")
+      
+      # Determine the dataset based on sample rate
+      if (sample_rate == "250hz") {
+        data <- data_250hz
+      } else if (sample_rate == "100hz") {
+        data <- data_100hz
+      } else if (sample_rate == "100_imp") {
+        data <- data_100_imp
+      } else {
+        cat("Invalid sample rate for sensor", sensor, "\n")
+        next
+      }
+      
       # Filter data for the selected sensor
-      summary_stats <- data_100hz %>%
-        filter(!is.na(passage_point) & long_id == sensor) %>%
+      filtered_data <- data %>%
+        filter(!is.na(passage_point) & long_id == sensor)
+      
+      if (nrow(filtered_data) == 0) {
+        cat("No data available for sensor", sensor, "\n")
+        next
+      }
+      # Filter data for the selected sensor
+      summary_stats <- filtered_data %>%
         summarize(
           min_pres = floor(min(pres) / 50) * 50,
           max_pres = ceiling(max(pres) / 50) * 50,
@@ -56,8 +77,7 @@ plot_sensors <- function(data_100hz) {
       primary_breaks <- seq(summary_stats$min_pres, summary_stats$max_pres, by = 50)
       secondary_breaks <- seq(summary_stats$min_accmag, summary_stats$max_accmag, by = 10)
       
-      filtered_data <- data_100hz %>%
-        filter(!is.na(passage_point) & long_id == sensor) %>%
+      filtered_data <- filtered_data %>%
         mutate(time_seconds = (row_number() - 1) * 0.01) %>%
         filter(time_seconds <= floor(max(time_seconds))) %>%
         left_join(batch_summary %>% select(file, nadir), by = c("long_id" = "file")) %>%
@@ -212,7 +232,7 @@ plot_sensors <- function(data_100hz) {
     
     # Check if all sensors are plotted
     if (all(batch_summary$plotted == "Y")) {
-      cat("All sensors plotted\n")
+      cat("All sensors plotted for sample rate", sample_rate, "\n")
       cat("Plotting processes ended\n")
       break
     } else {
@@ -225,4 +245,4 @@ plot_sensors <- function(data_100hz) {
   }
 }
 
-plot_sensors(data_100hz)
+plot_sensors(data_100hz, data_250hz, data_100_imp, "100_imp")
