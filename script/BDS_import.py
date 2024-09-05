@@ -31,8 +31,15 @@ class Rapid(ABC):
 
     def _save_as_csv(self, data, **kwargs) -> None:
         self._mkdir(self.dir_csv)
+        # Determine the suffix based on the class name
+        suffix = ""
+        if isinstance(self, IMP):
+            suffix = "_imp"
+        elif isinstance(self, HIG):
+            suffix = "_hig"
+        
         data.to_csv(
-            (self.dir_csv / self.filename.stem).with_suffix(".csv"),
+            (self.dir_csv / f"{self.filename.stem}{suffix}").with_suffix(".csv"),
             sep=",",
             index=False,
             **kwargs
@@ -314,7 +321,7 @@ class BDS100(Rapid):
         self.data, _ = super()._process_and_save(savecsv, **kwargs)
 
     def _class_specific_config(self) -> Tuple[int, list[str]]:
-        return 96, ["time", "pres", "P1", "P2", "P3", "accmag", "magx", "magy", "magz", "quat w", "quatx", "quaty", "quatz", "accx", "accy", "accz"]
+        return 96, ["time", "pres", "P1", "P2", "P3", "accmag", "magx", "magy", "magz", "quat w", "quatx", "quaty", "quatz", "accx", "accy", "accz", "gyrox", "gyroy", "gyroz"]
   #96 rows = 1s
   
     def _post_process(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, dict[str, float]]:
@@ -323,7 +330,7 @@ class BDS100(Rapid):
         data, summary_info = super()._post_process(data)
         # Add absolute acceleration calculations
         data = self._absolute_orientation(data)
-        relevant_fields = ["time", "pres", "P1", "P2", "P3", "accmag", "magx", "magy", "magz", "absaccx", "absaccy", "absaccz"]
+        relevant_fields = ["time", "pres", "accmag", "P1", "P2", "P3", "accx", "accy", "accz", "gyrox", "gyroy", "gyroz", "absaccx", "absaccy", "absaccz"]
         data = data[relevant_fields]
         return data, summary_info
    
@@ -372,7 +379,7 @@ class BDS250(Rapid):
         self.data, _ = super()._process_and_save(savecsv, **kwargs)
 
     def _class_specific_config(self) -> Tuple[int, list[str]]:
-        return 96, ["time", "pres", "P1", "P2", "P3", "accmag"]
+        return 96, ["time", "pres", "accmag", "P1", "P2", "P3", "accx", "accy", "accz", "gyrox", "gyroy", "gyroz"]
     #96 rows = 1s. Even when sensor set to 250hz, data log is at 100hz
     
 class IMP(Rapid):
@@ -549,7 +556,7 @@ class HIG(Rapid):
         super().__init__(filename)
         self.dir_csv = self.dir_csv / "RAPID_HIG"
         self.dir_plots = self.dir_plots / "RAPID_HIG"
-        self.class_name = "100_hig"
+        self.class_name = "2000_hig"
         self.packetSize = 11
         self.FS = 2000
         self.HIG_PREC = 1
@@ -736,7 +743,7 @@ if __name__ == "__main__":
     
         file_info = mymeas.parse_filename_info()
         summary_data.append({
-            'file': filename.stem,
+            'file': f"{filename.stem}_imp",
             'class': mymeas.class_name,
             **file_info,
             **summary_info
@@ -760,7 +767,7 @@ if __name__ == "__main__":
 
         file_info = mymeas.parse_filename_info()
         summary_data.append({
-        'file': filename.stem,
+        'file': f"{filename.stem}_hig",
         'class': mymeas.class_name,
         **file_info,
         **summary_info

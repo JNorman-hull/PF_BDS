@@ -21,6 +21,9 @@ py_install("jupyter_client")
 py_install("matplotlib")
 py_install("pandas")
 py_install("quaternion")
+py_install("opencv")
+py_install("statsmodels")
+
 
 #2. Python operation####
 
@@ -208,7 +211,8 @@ load_batch_summary <- function(batch_meta_dir) {
   
   cols_to_numeric <- c(
     "pres_min[mbar]", "pres_min[time]", "pres_max[mbar]",
-    "acc_max[m/s2]", "acc_max[time]", "max_impact[g-force]")
+    "pres_max[time]", "acc_max[m/s2]", "acc_max[time]",
+    "HIG_max[g]", "HIG_max[time]")
   
   for (col in cols_to_numeric) {
     if (col %in% colnames(batch_summary)) {
@@ -238,7 +242,7 @@ process_data_100hz <- function(file_path, sample_rate, long_id, short_id) {
   cat(paste("Processing 100hz data file:", file_path, "\n"))
   data <- read_csv(file_path, show_col_types = FALSE) %>%
     mutate(
-      long_id = factor(long_id),  # sensor_id is set to the value of 'file' from batch_summary
+      long_id = factor(long_id),  # long_id is set to the value of 'file' from batch_summary
       short_id = factor(short_id), # short_id is set to the value of 'sensor' from batch_summary
       sample_rate = factor(sample_rate),
       time = as.numeric(time), 
@@ -253,7 +257,7 @@ process_data_250hz <- function(file_path, sample_rate, long_id, short_id) {
   cat(paste("Processing 250hz data file:", file_path, "\n"))
   data <- read_csv(file_path, show_col_types = FALSE) %>%
     mutate(
-      long_id = factor(long_id),  # sensor_id is set to the value of 'file' from batch_summary
+      long_id = factor(long_id),  # long_id is set to the value of 'file' from batch_summary in process_batch_files
       short_id = factor(short_id), # short_id is set to the value of 'sensor' from batch_summary
       sample_rate = factor(sample_rate),
       time = as.numeric(time), 
@@ -268,7 +272,7 @@ process_data_100_imp <- function(file_path, sample_rate, long_id, short_id) {
   cat(paste("Processing RAPID 100hz IMP data file:", file_path, "\n"))
   data <- read_csv(file_path, show_col_types = FALSE) %>%
     mutate(
-      long_id = factor(long_id),  # sensor_id is set to the value of 'file' from batch_summary
+      long_id = factor(long_id),  # long_id is set to the value of 'file' from batch_summary
       short_id = factor(short_id), # short_id is set to the value of 'sensor' from batch_summary
       sample_rate = factor(sample_rate),
       time = as.numeric(`Time (s)`), 
@@ -280,11 +284,28 @@ process_data_100_imp <- function(file_path, sample_rate, long_id, short_id) {
   return(data)
 }
 
-process_batch_files <- function(batch_meta_dir, bds100_dir, bds250_dir, rapid_dir) {
+process_data_2000_hig <- function(file_path, sample_rate, long_id, short_id) {
+  cat(paste("Processing RAPID 2000hz HIG data file:", file_path, "\n"))
+  data <- read_csv(file_path, show_col_types = FALSE) %>%
+    mutate(
+      long_id = factor(long_id),  # long_id is set to the value of 'file' from batch_summary
+      short_id = factor(short_id), # short_id is set to the value of 'sensor' from batch_summary
+      sample_rate = factor(sample_rate),
+      time = as.numeric(`Time (s)`), 
+      HIGaccmag = as.numeric(`HIGAccel_Mag (g)`)
+    )%>%
+    select(-c('Time (s)', 'HIGAccel_Mag (g)')
+    )
+  return(data)
+}
+
+
+process_batch_files <- function(batch_meta_dir, bds100_dir, bds250_dir, rapid_imp_dir, rapid_hig_dir) {
   batch_summary <- load_batch_summary(batch_meta_dir)
   data_250hz <- tibble()
   data_100hz <- tibble()
   data_100_imp <- tibble()
+  data_2000_hig <- tibble()
   cat("Processing batch files...\n")
   
   for (i in seq_len(nrow(batch_summary))) {
@@ -300,7 +321,10 @@ process_batch_files <- function(batch_meta_dir, bds100_dir, bds250_dir, rapid_di
       subdir <- bds100_dir
     } else if (sample_rate == "100_imp") {
       sample_rate_value <- "100_imp"
-      subdir <- rapid_dir
+      subdir <- rapid_imp_dir
+    } else if (sample_rate == "2000_hig") {
+      sample_rate_value <- "2000_hig"
+      subdir <- rapid_hig_dir
     } else {
       cat("Invalid sample rate:", sample_rate, "\n")
       next
@@ -315,6 +339,8 @@ process_batch_files <- function(batch_meta_dir, bds100_dir, bds250_dir, rapid_di
         data_100hz <- bind_rows(data_100hz, process_data_100hz(file_path, sample_rate_value, long_id, short_id))
       } else if (sample_rate_value == "100_imp") {
         data_100_imp <- bind_rows(data_100_imp, process_data_100_imp(file_path, sample_rate_value, long_id, short_id))
+      } else if (sample_rate_value == "2000_hig") {
+        data_2000_hig <- bind_rows(data_2000_hig, process_data_2000_hig(file_path, sample_rate_value, long_id, short_id))
       }
     } else {
       cat(paste("File not found:", file_path, "\n"))
@@ -325,6 +351,7 @@ process_batch_files <- function(batch_meta_dir, bds100_dir, bds250_dir, rapid_di
   assign("data_250hz", data_250hz, envir = .GlobalEnv)
   assign("data_100hz", data_100hz, envir = .GlobalEnv)
   assign("data_100_imp", data_100_imp, envir = .GlobalEnv)
+  assign("data_2000_hig", data_2000_hig, envir = .GlobalEnv)
   cat("Batch file processing completed.\n")
 }
 
@@ -366,12 +393,12 @@ subset_by_long_id <- function(data) {
   }
 }
 
-save_data <- function(batch_summary, data_100hz, data_250hz, data_100_imp) {
+save_data <- function(batch_summary, data_100hz, data_250hz, data_100_imp, data_2000_hig) {
   # Check relevant data class (100, 250, or 100_imp)
-  cat("Enter the sample rate (100, 250, or 100_imp)\n")
+  cat("Enter the sample rate (100, 250, 100_imp or 2000_hig\n")
   sample_rate <- readline(prompt = "Sample rate: ")
-  if (!sample_rate %in% c("100", "250", "100_imp")) {
-    stop("Invalid sample rate. Please enter 100, 250, or 100_imp.")
+  if (!sample_rate %in% c("100", "250", "100_imp", "2000_imp")) {
+    stop("Invalid sample rate. Please enter 100, 250, 100_imp or 2000_hig.")
   }
   
   # Check if pres_processed and acc_processed all = Y
@@ -408,6 +435,8 @@ save_data <- function(batch_summary, data_100hz, data_250hz, data_100_imp) {
     data_to_save <- data_250hz %>% filter(!is.na(passage_point))
   } else if (sample_rate == "100_imp") {
     data_to_save <- data_100_imp %>% filter(!is.na(passage_point))
+  } else if (sample_rate == "2000_hig") {
+    data_to_save <- data_2000_hig %>% filter(!is.na(passage_point))
   } else {
     stop("Invalid sample rate.")
   }
@@ -428,11 +457,15 @@ filter_batch_summary <- function(batch_summary, sample_rate) {
   } else if (sample_rate == "100_imp") {
     data_class <- "100_imp"
     num_rows <- 96
+  } else if (sample_rate == "2000_hig") {
+    data_class <- "2000_hig"
+    num_rows <- 2000
   } else {
     stop("Invalid sample rate")
   }
   
-  # num_rows is 96 for both sensors as 96 rows = 1s. Only included for future redundancy 
+  #check that the hig is 2k rows
+  # num_rows is 96 for both sensors as 96 rows = 1s @100hz & 250hz. Only included for future redundancy 
   
   # Modify this to allow for either to be Y but not both
   sensors <- batch_summary %>%
@@ -687,14 +720,27 @@ create_combined_plot <- function(data, sensor_summary, selected_sensor, stage, n
     for (col in peak_cols) {
       peak_times <- sensor_summary[[paste0(col, "_t")]]
       peak_values <- sensor_summary[[col]]
-      p <- p %>%
-        add_markers(
-          x = peak_times,
-          y = peak_values,
-          name = paste0(col),
-          yaxis = 'y2',
-          marker = list(color = 'orange', size = 10, line = list(color = 'black', width = 1))
-        )
+      
+      # Only plot peaks within the passage points
+      if (stage == 5) {
+        t_injection <- sensor_summary$t_injection
+        t_tailwater <- sensor_summary$t_tailwater
+        valid_peaks <- peak_times >= t_injection & peak_times <= t_tailwater
+        peak_times <- peak_times[valid_peaks]
+        peak_values <- peak_values[valid_peaks]
+      }
+      
+      # Only add markers if there are valid peaks to plot
+      if (length(peak_times) > 0 && length(peak_values) > 0) {
+        p <- p %>%
+          add_markers(
+            x = peak_times,
+            y = peak_values,
+            name = paste0(col),
+            yaxis = 'y2',
+            marker = list(color = 'orange', size = 10, line = list(color = 'black', width = 1))
+          )
+      }
     }
   }
   
@@ -855,6 +901,24 @@ calculate_rate_pressure_change <- function(batch_summary, selected_sensor) {
   batch_summary
 }
 
+set_max_acclimation_pressure <- function(default_pressure = 1000) {
+  cat("Default maximum acclimation pressure is set to", default_pressure, "mbar.\n")
+  change_max_acclim <- readline(prompt = "Do you want to change the maximum acclimation pressure? (Y/N): ")
+  
+  if (toupper(change_max_acclim) == "Y") {
+    max_acclim <- as.numeric(readline(prompt = "Enter new maximum acclimation pressure: "))
+    while (is.na(max_acclim)) {
+      cat("Invalid input. Please enter a numeric value.\n")
+      max_acclim <- as.numeric(readline(prompt = "Enter new maximum acclimation pressure: "))
+    }
+  } else {
+    max_acclim <- default_pressure
+  }
+  
+  cat("Maximum acclimation pressure set to", max_acclim, "mbar.\n")
+  return(max_acclim)
+}
+
 calculate_ratio_pressure_change <- function(batch_summary, selected_sensor, max_acclim) {
   # Calculate ratio pressure change
   ratio_pc_value <- batch_summary %>% filter(file == selected_sensor) %>% 
@@ -878,12 +942,35 @@ calculate_ratio_pressure_change <- function(batch_summary, selected_sensor, max_
   batch_summary
 }
 
-prompt_for_injection_tailwater_times <- function(batch_summary, selected_sensor) {
-  cat("Visually inspect the plot to determine injection and tailwater points. Enter injection and tailwater time\n")
-  t_injection_val <- as.numeric(readline(prompt = "Enter injection time value: "))
-  t_tailwater_val <- as.numeric(readline(prompt = "Enter tailwater time value: "))
-  if (is.na(t_injection_val) || is.na(t_tailwater_val)) {
-    stop("Invalid injection or tailwater time")
+prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_sensor, num_rows) {
+  sensor_data <- data %>% filter(long_id == selected_sensor)
+  t_nadir_val <- batch_summary %>% filter(file == selected_sensor) %>% pull(t_nadir)
+  nadir_index <- which(sensor_data$time == t_nadir_val)
+  
+  if (length(nadir_index) == 0) {
+    stop("Nadir time not found in the data")
+  }
+  
+  row_start <- max(1, nadir_index - num_rows * 2)
+  row_end <- min(nrow(sensor_data), nadir_index + num_rows * 2)
+  
+  t_injection_val <- sensor_data$time[row_start]
+  t_tailwater_val <- sensor_data$time[row_end]
+  
+  cat("Default injection time (nadir - 2s):", t_injection_val, "\n")
+  cat("Default tailwater time (nadir + 2s):", t_tailwater_val, "\n")
+  
+  use_default <- readline(prompt = "Use these default times? (Y/N): ")
+  
+  if (toupper(use_default) != "Y") {
+    cat("Enter custom injection and tailwater times\n")
+    t_injection_val <- as.numeric(readline(prompt = "Enter injection time value: "))
+    t_tailwater_val <- as.numeric(readline(prompt = "Enter tailwater time value: "))
+    while (is.na(t_injection_val) || is.na(t_tailwater_val)) {
+      cat("Invalid input. Please enter numeric values.\n")
+      t_injection_val <- as.numeric(readline(prompt = "Enter injection time value: "))
+      t_tailwater_val <- as.numeric(readline(prompt = "Enter tailwater time value: "))
+    }
   }
   
   batch_summary <- batch_summary %>%
@@ -941,6 +1028,63 @@ assign_passage_points <- function(data, batch_summary, selected_sensor, sample_r
   return(data)
 }
 
+assign_passage_points_manual <- function(sample_rate, batch_summary) {
+  cat("Assigning passage points for sample rate:", sample_rate, "\n")
+  
+  # Determine which dataframe to use based on sample_rate
+  data_name <- switch(sample_rate,
+                      "100" = "data_100hz",
+                      "250" = "data_250hz",
+                      "100_imp" = "data_100_imp",
+                      "2000_hig" = "data_2000_hig",
+                      stop("Invalid sample_rate. Must be '100', '250', '100_imp', or '2000_hig'"))
+  
+  # Get the data from the global environment
+  data <- get(data_name, envir = .GlobalEnv)
+  
+  # Ensure passage_point column exists and is initialized as NA
+  if (!"passage_point" %in% colnames(data)) {
+    data$passage_point <- NA_character_
+  }
+  
+  # Process each file in batch_summary
+  for (file in batch_summary$file) {
+    # Extract injection and tailwater times from batch_summary
+    file_summary <- batch_summary[batch_summary$file == file, ]
+    t_injection_val <- file_summary$t_injection
+    t_nadir_val <- file_summary$t_nadir
+    t_tailwater_val <- file_summary$t_tailwater
+    
+    # Only process if both t_injection and t_tailwater are not 0.00
+    if (t_injection_val != 0.00 && t_tailwater_val != 0.00) {
+      cat("Processing file:", file, "\n")
+      cat("Injection time:", t_injection_val, "\n")
+      cat("Nadir time:", t_nadir_val, "\n")
+      cat("Tailwater time:", t_tailwater_val, "\n")
+      
+      # Assign passage points based on time ranges
+      data <- data %>%
+        mutate(passage_point = case_when(
+          long_id == file & time >= t_injection_val & time < t_nadir_val ~ "pre_nadir",
+          long_id == file & time >= t_nadir_val & time <= t_tailwater_val ~ "post_nadir",
+          TRUE ~ passage_point
+        ))
+      
+      cat("Passage points assigned to", file, "\n")
+    } else {
+      cat("Skipping file:", file, "(t_injection or t_tailwater is 0.00)\n")
+    }
+  }
+  
+  # Convert passage_point to factor
+  data$passage_point <- factor(data$passage_point, levels = c("pre_nadir", "post_nadir"))
+  
+  # Assign the modified data back to the global environment
+  assign(data_name, data, envir = .GlobalEnv)
+  
+  cat("Passage points assignment completed and data updated in the global environment.\n")
+}
+
 time_normalization <- function(data, selected_sensor) {
   
   # Ensure time_norm column exists and is initialized as 0
@@ -976,6 +1120,65 @@ time_normalization <- function(data, selected_sensor) {
   return(data)
 }
 
+time_normalization_manual <- function(sample_rate, batch_summary) {
+  cat("Performing time normalization for sample rate:", sample_rate, "\n")
+  
+  # Determine which dataframe to use based on sample_rate
+  data_name <- switch(sample_rate,
+                      "100" = "data_100hz",
+                      "250" = "data_250hz",
+                      "100_imp" = "data_100_imp",
+                      "2000_hig" = "data_2000_hig",
+                      stop("Invalid sample_rate. Must be '100', '250', '100_imp', or '2000_hig'"))
+  
+  # Get the data from the global environment
+  data <- get(data_name, envir = .GlobalEnv)
+  
+  # Ensure time_norm column exists and is initialized as 0
+  if (!"time_norm" %in% colnames(data)) {
+    data$time_norm <- 0
+  }
+  
+  # Process each file in batch_summary
+  for (file in batch_summary$file) {
+    # Filter data for the current file
+    data_file <- data[data$long_id == file, ]
+    
+    # Check if there are any pre_nadir and post_nadir points
+    if (any(data_file$passage_point == 'pre_nadir', na.rm = TRUE) && 
+        any(data_file$passage_point == 'post_nadir', na.rm = TRUE)) {
+      
+      cat("Processing file:", file, "\n")
+      
+      # Identify the start and end times for normalization
+      start_time <- min(data_file$time[data_file$passage_point == 'pre_nadir'], na.rm = TRUE)
+      mid_time <- min(data_file$time[data_file$passage_point == 'post_nadir'], na.rm = TRUE)
+      end_time <- max(data_file$time[data_file$passage_point == 'post_nadir'], na.rm = TRUE)
+      
+      # Calculate normalized time values
+      data <- data %>%
+        mutate(time_norm = case_when(
+          long_id == file & time <= start_time ~ 0,
+          long_id == file & time >= end_time ~ 1,
+          long_id == file & time > start_time & time < mid_time ~ 
+            (time - start_time) / (mid_time - start_time) * 0.5,
+          long_id == file & time >= mid_time & time <= end_time ~ 
+            0.5 + (time - mid_time) / (end_time - mid_time) * 0.5,
+          TRUE ~ time_norm
+        ))
+      
+      cat("Time normalization completed for", file, "\n")
+    } else {
+      cat("Skipping file:", file, "(missing pre_nadir or post_nadir points)\n")
+    }
+  }
+  
+  # Assign the modified data back to the global environment
+  assign(data_name, data, envir = .GlobalEnv)
+  
+  cat("Time normalization completed and data updated in the global environment.\n")
+}
+
 update_global_environment <- function(data, batch_summary, sample_rate) {
   if (sample_rate == 250) {
     data_250hz <- data
@@ -986,6 +1189,9 @@ update_global_environment <- function(data, batch_summary, sample_rate) {
   } else if (sample_rate == "100_imp") {
     data_100_imp <- data
     assign("data_100_imp", data_100_imp, envir = .GlobalEnv)
+  } else if (sample_rate == "2000_hig") {
+    data_2000_hig <- data
+    assign("data_2000_hig", data_2000_hig, envir = .GlobalEnv)
   }
   assign("batch_summary", batch_summary, envir = .GlobalEnv)
 }
@@ -1006,7 +1212,7 @@ check_sensor <- function(batch_summary, selected_sensor) {
 
 
 #BDS analysis tool prototype
-BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp, sample_rate) {
+BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, sample_rate) {
   
   filter_result <- filter_batch_summary(batch_summary, sample_rate)
   if (!is.null(filter_result$message)) {
@@ -1022,6 +1228,8 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
     data_100hz
   } else if (sample_rate == "100_imp") {
     data_100_imp
+  } else if (sample_rate == "2000_hig") {
+    data_2000_hig
   }
   
   # Create list of sensors available for processing.
@@ -1063,11 +1271,7 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
     # Calculate rate pressure change
     batch_summary <- calculate_rate_pressure_change(batch_summary, selected_sensor)
     
-    cat("Enter maximum acclimation pressure (e.g., atmospheric pressure or static pressure within system)\n")
-    max_acclim <- as.numeric(readline(prompt = "Maximum acclimation pressure: "))
-    if (is.na(max_acclim)) {
-      stop("Invalid maximum acclimation pressure")
-    }
+    max_acclim <- set_max_acclimation_pressure()
     
     # Calculate ratio pressure change and log ratio pressure change
     batch_summary <- calculate_ratio_pressure_change(batch_summary, selected_sensor, max_acclim)
@@ -1095,7 +1299,7 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
     print(plotly_plot)
     
     # Prompt user to enter injection and tailwater time
-    batch_summary <- prompt_for_injection_tailwater_times(batch_summary, selected_sensor)
+    batch_summary <- prompt_for_injection_tailwater_times(data, batch_summary, selected_sensor, num_rows)
     
     # Assign passage points
     data <- assign_passage_points(data, batch_summary, selected_sensor, sample_rate)
@@ -1136,7 +1340,7 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
   cat("BDS analysis complete for", selected_sensor, "\n")
   continue <- readline(prompt = "Continue with BDS analysis? (Y/N): ")
   if (toupper(continue) == "Y") {
-    BDSAnalysisTool(batch_summary, data_250hz, data_100hz, data_100_imp, sample_rate)
+    BDSAnalysisTool(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, sample_rate)
   } else {
     cat("BDS Analysis tool ended\n")
   }
