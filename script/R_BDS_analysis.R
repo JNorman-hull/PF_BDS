@@ -136,8 +136,8 @@ batch_summary=read_csv("./PROCESSED_data/processed_500_1_batch_summary.csv")
 BDSAnalysisTool(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, "100_imp")
 
 #Apply manual passage/time normalisation due to bug in tool
-assign_passage_points_manual("100_imp", batch_summary)
-time_normalization_manual("100_imp", batch_summary)
+assign_passage_points_manual("250", batch_summary)
+time_normalization_manual("250", batch_summary)
 
 #Save and exported ROI processed data frame, either for continued processing, or for further analysis
 save_data(batch_summary, data_100hz, data_250hz, data_100_imp, data_2000_hig)
@@ -149,5 +149,6 @@ process_batch_files(batch_meta_dir, bds100_dir, bds250_dir, rapid_imp_dir, rapid
 BDSAnalysisTool(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, "250")
 
 
+write.csv(data_250hz, "./PROCESSED_data/processed_KATHA.csv", row.names = FALSE)
 
 

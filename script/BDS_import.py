@@ -138,7 +138,6 @@ class Rapid(ABC):
         return filtered.shape[0]
 
     def _post_process(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, dict[str, float]]:
-        """Common post-processing logic shared between subclasses."""
         data["time"] = (data["time"] - data["time"].iloc[0]) / 1000
         
         if data["time"].max() >= 5000:
@@ -150,46 +149,48 @@ class Rapid(ABC):
         pres_data = self.compute_pres(data, valid_sensors)
         sample_speed, relevant_fields = self._class_specific_config()
         
+        # Check if all pressure sensors are malfunctioning
+        if pres_data['pres'].isna().all():
+            pres_data['pres'] = 0  # Fill with 0 if all sensors are malfunctioning
+            warning_message = "ERROR: All pressure sensors malfunctioning. Pressure data filled with 0."
+        else:
+            unchanged_sensors = [sensor for sensor, is_valid in valid_sensors.items() if not is_valid]
+            sensors_used_summary = pres_data['sensors_used'].unique()
+            sensors_used_summary_text = ', '.join(sensors_used_summary)
+    
+            if unchanged_sensors:
+                warning_message = f"WARNING: Pressure data error ({', '.join(unchanged_sensors)}). Average taken from {sensors_used_summary_text}"
+            else:
+                warning_message = "All pressure sensors working"
+    
         data.insert(1, "pres", pres_data['pres'])
-        data.insert(1, "accmag", np.linalg.norm(data[["accx", "accy", "accz"]], axis=-1)) #computes the Euclidean norm (magnitude) across the acceleration components along the x, y, and z axes.
-        data["accmag"] -= 9.81 #removes earth gravity
+        data.insert(1, "accmag", np.linalg.norm(data[["accx", "accy", "accz"]], axis=-1))
+        data["accmag"] -= 9.81
         data = data[relevant_fields]
-
-        #Calculate duration of sensor deployment
-        #where sample_speed = 96 rows for 1s
+    
         num_seconds = len(data)// sample_speed
         minutes, seconds = divmod(num_seconds, 60)
         duration = f"{minutes:02}:{seconds:02}"
-
-        #consider 100 m/s2 as an impact indicator
+    
         max_acc_g_force = data['accmag'].max()
         if max_acc_g_force >= 100:
             acc_warning = "ACC: Acceleration event >= 100 m/s2 detected"
         else:
             acc_warning = ""
-
+    
         pres_min_index = data['pres'].idxmin()
         pres_min_time = data['time'][pres_min_index]
         pres_max_index = data['pres'].idxmax()
         pres_max_time = data['time'][pres_max_index]
         acc_max_index = data['accmag'].idxmax()
         acc_max_time = data['time'][acc_max_index]
-        
-        unchanged_sensors = [sensor for sensor, is_valid in valid_sensors.items() if not is_valid]
-        sensors_used_summary = pres_data['sensors_used'].unique()
-        sensors_used_summary_text = ', '.join(sensors_used_summary)
-
-        if unchanged_sensors:
-            warning_message = f"WARNING: Pressure data error ({', '.join(unchanged_sensors)}). Average taken from {sensors_used_summary_text}"
-        else:
-            warning_message = "All pressure sensors working"
-
+    
         if time_warning:
             warning_message = time_warning + "; " + warning_message
             
         if acc_warning:
             warning_message = acc_warning + "; " + warning_message
-
+    
         summary_info = {
             'duration[mm:ss]': duration,
             'pres_min[mbar]': data['pres'].min(),
@@ -200,7 +201,7 @@ class Rapid(ABC):
             'acc_max[time]': acc_max_time,
             'messages': warning_message
         }
-
+    
         return data, summary_info
       
     def plot_data_overview(self, save: bool = True, show: bool = False) -> None:
