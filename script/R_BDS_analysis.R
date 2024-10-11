@@ -146,7 +146,7 @@ save_data(batch_summary, data_100hz, data_250hz, data_100_imp, data_2000_hig)
 
 process_batch_files(batch_meta_dir, bds100_dir, bds250_dir, rapid_imp_dir, rapid_hig_dir)
 
-BDSAnalysisTool(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, "250")
+BDSAnalysisTool(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, "100_imp")
 
 
 write.csv(data_250hz, "./PROCESSED_data/processed_KATHA.csv", row.names = FALSE)

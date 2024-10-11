@@ -24,7 +24,7 @@ py_install("quaternion")
 py_install("opencv")
 py_install("statsmodels")
 
-
+py_install("pillow")
 #2. Python operation####
 
 ##2.1 Run python####
