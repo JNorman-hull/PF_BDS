@@ -24,7 +24,7 @@ py_install("quaternion")
 py_install("opencv")
 py_install("statsmodels")
 
-
+py_install("pillow")
 #2. Python operation####
 
 ##2.1 Run python####
@@ -185,6 +185,7 @@ reticulate::source_python('./script/BDS_import.py')
 #4. BDS analysis functions####
 
 
+
 theme_JN <- function(base_size=10){ 
   theme_grey() %+replace%
     theme(
@@ -223,7 +224,7 @@ load_batch_summary <- function(batch_meta_dir) {
   }
   
   additional_cols <- c(
-    "t_injection", "t_max_p_1s_nadir","t_nadir", "t_tailwater", "nadir",
+    "t_max_p_1s_nadir","t_nadir", "nadir",
     "max_p_1s_nadir", "rate_pc", "ratio_pc", "log_RPC")
   for (col in additional_cols) {
     batch_summary[[col]] <- as.numeric(0)
@@ -355,97 +356,6 @@ process_batch_files <- function(batch_meta_dir, bds100_dir, bds250_dir, rapid_im
   cat("Batch file processing completed.\n")
 }
 
-add_treatment <- function(data, data_name) {
-  # Define the possible entries
-  pump_rpm_choices <- c(400, 500, 600, 700)
-  inj_pos_choices <- c('us_pump_1_c', 'us_pump_1_h', 'us_pump_1_l', 'us_pump_2_c', 'us_pump_2_h', 'us_pump_2_l', 'ds_pump')
-  treatment_choices <- c(
-    '400_control', '400_impact_us1c', '400_impact_us1h', '400_impact_us1l', '400_impact_us2c', '400_impact_us2h', '400_impact_us2l', 
-    '500_control', '500_impact_us1c', '500_impact_us1h', '500_impact_us1l', '500_impact_us2c', '500_impact_us2h', '500_impact_us2l',
-    '600_control', '600_impact_us1c', '600_impact_us1h', '600_impact_us1l', '600_impact_us2c', '600_impact_us2h', '600_impact_us2l',
-    '700_control', '700_impact_us1c', '700_impact_us1h', '700_impact_us1l', '700_impact_us2c', '700_impact_us2h', '700_impact_us2l'
-  )
-  pump_rpm <- pump_rpm_choices[menu(pump_rpm_choices, title = "Select Pump RPM:")]
-  inj_pos <- inj_pos_choices[menu(inj_pos_choices, title = "Select Injection position:")]
-  treatment <- treatment_choices[menu(treatment_choices, title = "Select Treatment:")]
-  cat("Selected values:\n")
-  cat("pump_rpm:", pump_rpm, "\n")
-  cat("inj_pos:", inj_pos, "\n")
-  cat("treatment:", treatment, "\n")
-  data <- data %>%
-    mutate(
-      pump_rpm = factor(pump_rpm),
-      inj_pos = factor(inj_pos),
-      treatment = factor(treatment)
-    )
-  assign(data_name, data, envir = .GlobalEnv)
-  cat(paste("Treatment variables assigned to", data_name, "\n"))
-}
-
-subset_by_long_id <- function(data) {
-  unique_ids <- unique(data$long_id)
-  
-  for (id in unique_ids) {
-    subset_data <- data %>% filter(long_id == id)
-    subset_name <- as.character(id)
-    assign(subset_name, subset_data, envir = .GlobalEnv)
-    cat(paste("Created subset:", subset_name, "\n"))
-  }
-}
-
-save_data <- function(batch_summary, data_100hz, data_250hz, data_100_imp, data_2000_hig) {
-  # Check relevant data class (100, 250, or 100_imp)
-  cat("Enter the sample rate (100, 250, 100_imp or 2000_hig\n")
-  sample_rate <- readline(prompt = "Sample rate: ")
-  if (!sample_rate %in% c("100", "250", "100_imp", "2000_imp")) {
-    stop("Invalid sample rate. Please enter 100, 250, 100_imp or 2000_hig.")
-  }
-  
-  # Check if pres_processed and acc_processed all = Y
-  if (all(batch_summary$pres_processed == "Y") && all(batch_summary$acc_processed == "Y")) {
-    message <- "Batch processing complete, proceed with saving? (Y/N): "
-  } else {
-    message <- "Caution: Batch processing incomplete, proceed with saving? (Y/N): "
-  }
-  
-  proceed <- readline(prompt = message)
-  if (toupper(proceed) != "Y") {
-    cat("Saving process aborted.\n")
-    return(invisible())
-  }
-  
-  # Prompt user to enter batch name
-  batch_name <- readline(prompt = "Enter batch name: ")
-  
-  cat("Saving batch summary and data file...\n")
-  
-  # Save batch_summary and data_ as .csv files
-  output_dir <- "./R_output_files"
-  if (!dir.exists(output_dir)) {
-    dir.create(output_dir)
-  }
-  
-  batch_summary_file <- file.path(output_dir, paste0(batch_name, "_batch_summary.csv"))
-  write.csv(batch_summary, batch_summary_file, row.names = FALSE)
-  
-  # Filter data_ by passage_point to remove any NA values
-  if (sample_rate == "100") {
-    data_to_save <- data_100hz %>% filter(!is.na(passage_point))
-  } else if (sample_rate == "250") {
-    data_to_save <- data_250hz %>% filter(!is.na(passage_point))
-  } else if (sample_rate == "100_imp") {
-    data_to_save <- data_100_imp %>% filter(!is.na(passage_point))
-  } else if (sample_rate == "2000_hig") {
-    data_to_save <- data_2000_hig %>% filter(!is.na(passage_point))
-  } else {
-    stop("Invalid sample rate.")
-  }
-  
-  data_file <- file.path(output_dir, paste0(batch_name, "_data_", sample_rate, ".csv"))
-  write.csv(data_to_save, data_file, row.names = FALSE)
-  
-  cat("Files saved successfully.\n")
-}
 
 filter_batch_summary <- function(batch_summary, sample_rate) {
   if (sample_rate == 250) {
@@ -495,11 +405,7 @@ prompt_user_to_select_sensor <- function(sensors) {
 
 create_combined_plot <- function(data, sensor_summary, selected_sensor, stage, num_rows) {
   # Filter data for the selected sensor
-  if (stage == 5 || stage == 6) {
-    data <- filter(data, long_id == selected_sensor, !is.na(passage_point))
-  } else {
-    data <- filter(data, long_id == selected_sensor)
-  }
+  data <- filter(data, long_id == selected_sensor)
   
   if (stage == 2) {
     nadir_time <- sensor_summary$t_nadir
@@ -509,81 +415,31 @@ create_combined_plot <- function(data, sensor_summary, selected_sensor, stage, n
     data <- data[row_start:row_end, ]
   }
   
+  if (stage == 4 || stage == 5) {
+    data <- filter(data, !is.na(passage_point))
+  }
+  
   # Base plot
   p <- plot_ly(data)
   
-  if (stage != 3) {
-    if (stage == 6) {
-      p <- p %>%
-        add_lines(x = ~time_norm, y = ~pres, name = 'Pressure', yaxis = 'y1', line = list(color = 'red', width = 1))
-    } else {
-      p <- p %>%
-        add_lines(x = ~time, y = ~pres, name = 'Pressure', yaxis = 'y1', line = list(color = 'red', width = 1))
-    }
-  }
+  # Always add pressure line
+  p <- p %>%
+    add_lines(x = if(stage == 5) ~time_norm else ~time, y = ~pres, name = 'Pressure', yaxis = 'y1', line = list(color = 'red', width = 1))
   
+  # Add acceleration line for stages 3 and above
   if (stage >= 3) {
-    if (stage == 6) {
-      p <- p %>%
-        add_lines(x = ~time_norm, y = ~accmag, name = 'Acceleration', yaxis = 'y2', line = list(color = 'blue', width = 1))
-    } else {
-      p <- p %>%
-        add_lines(x = ~time, y = ~accmag, name = 'Acceleration', yaxis = 'y2', line = list(color = 'blue', width = 1))
-    }
-    
-    # Add horizontal lines for stage 3
-    if (stage == 3) {
-      p <- p %>%
-        layout(
-          shapes = list(
-            list(type = "line", 
-                 x0 = min(data$time), x1 = max(data$time), xref = "x",
-                 y0 = 49.03, y1 = 49.03, yref = "y2",
-                 line = list(color = "black", dash = "dash")),
-            list(type = "line", 
-                 x0 = min(data$time), x1 = max(data$time), xref = "x",
-                 y0 = 98.07, y1 = 98.07, yref = "y2",
-                 line = list(color = "red", dash = "dash")),
-            list(type = "line", x0 = 0, x1 = 1, xref = "paper", y0 = 1, y1 = 1, yref = "paper", line = list(color = "black", width = 1)),
-            list(type = "line", x0 = 0, x1 = 1, xref = "paper", y0 = 0, y1 = 0, yref = "paper", line = list(color = "black", width = 1)),
-            list(type = "line", x0 = 0, x1 = 0, xref = "paper", y0 = 0, y1 = 1, yref = "paper", line = list(color = "black", width = 1)),
-            list(type = "line", x0 = 1, x1 = 1, xref = "paper", y0 = 0, y1 = 1, yref = "paper", line = list(color = "black", width = 1))
-          )
-        ) %>%
-        add_annotations(
-          x = max(data$time) - (max(data$time) - min(data$time)) * 0.05,
-          y = 49.03,
-          text = 'G-force >= 5g',
-          yref = "y2",
-          showarrow = FALSE,
-          xanchor = "right",
-          font = list(color = 'black')
-        ) %>%
-        add_annotations(
-          x = max(data$time) - (max(data$time) - min(data$time)) * 0.05,
-          y = 98.07,
-          text = 'G-force >= 10g',
-          yref = "y2",
-          showarrow = FALSE,
-          xanchor = "right",
-          font = list(color = 'red')
-        )
-    }
+    p <- p %>%
+      add_lines(x = if(stage == 5) ~time_norm else ~time, y = ~accmag, name = 'Acceleration', yaxis = 'y2', line = list(color = 'blue', width = 1))
   }
   
+  # Add stage-specific elements
   if (stage == 2) {
     nadir_index <- which(data$time == sensor_summary$t_nadir)
     time_start <- data$time[max(1, nadir_index - num_rows)]
     time_end <- data$time[min(nrow(data), nadir_index + num_rows)]
     vertical_lines <- list(
-      list(type = "line", 
-           x0 = time_start, x1 = time_start, xref = "x",
-           y0 = 0, y1 = 1, yref = "paper",
-           line = list(color = "black", dash = "dash")),
-      list(type = "line", 
-           x0 = time_end, x1 = time_end, xref = "x",
-           y0 = 0, y1 = 1, yref = "paper",
-           line = list(color = "black", dash = "dash"))
+      list(type = "line", x0 = time_start, x1 = time_start, xref = "x", y0 = 0, y1 = 1, yref = "paper", line = list(color = "black", dash = "dash")),
+      list(type = "line", x0 = time_end, x1 = time_end, xref = "x", y0 = 0, y1 = 1, yref = "paper", line = list(color = "black", dash = "dash"))
     )
     p <- p %>%
       layout(
@@ -594,65 +450,64 @@ create_combined_plot <- function(data, sensor_summary, selected_sensor, stage, n
           list(type = "line", x0 = 1, x1 = 1, xref = "paper", y0 = 0, y1 = 1, yref = "paper", line = list(color = "black", width = 1))
         )),
         annotations = list(
-          list(
-            x = (time_start + time_end) / 2,
-            y = 0.8,
-            text = '1s time window',
-            showarrow = FALSE,
-            xref = 'x',
-            yref = 'paper',
-            font = list(color = 'black', size = 12),
-            xanchor = 'center',
-            yanchor = 'middle'
-          )
+          list(x = (time_start + time_end) / 2, y = 0.8, text = '1s time window', showarrow = FALSE, xref = 'x', yref = 'paper', font = list(color = 'black', size = 12), xanchor = 'center', yanchor = 'middle')
         )
       )
   }
   
-  p <- p %>%
-    layout(
-      xaxis = list(
-        title = "Time [s]",
-        zeroline = FALSE,
-        showline = FALSE,
-        showgrid = FALSE,
-        ticks = 'outside',
-        tickcolor = 'black'
-      ),
-      yaxis = list(
-        title = "Pressure [mbar]",
-        side = 'left',
-        zeroline = FALSE,
-        showgrid = FALSE,
-        showline = FALSE,
-        ticks = 'outside',
-        tickcolor = 'black',
-        color = 'red'
-      ),
-      yaxis2 = list(
-        title = "Acceleration magnitude [m/s2]",
-        overlaying = 'y',
-        side = 'right',
-        showgrid = FALSE,
-        zeroline = FALSE,
-        showline = FALSE,
-        ticks = 'outside',
-        tickcolor = 'black',
-        color = 'blue',
-        automargin = TRUE 
-      ),
-      plot_bgcolor = 'white',
-      paper_bgcolor = 'white',
-      showlegend = FALSE,
-      shapes = list(
-        list(type = "line", x0 = 0, x1 = 1, xref = "paper", y0 = 1, y1 = 1, yref = "paper", line = list(color = "black", width = 1)),
-        list(type = "line", x0 = 0, x1 = 1, xref = "paper", y0 = 0, y1 = 0, yref = "paper", line = list(color = "black", width = 1)),
-        list(type = "line", x0 = 0, x1 = 0, xref = "paper", y0 = 0, y1 = 1, yref = "paper", line = list(color = "black", width = 1)),
-        list(type = "line", x0 = 1, x1 = 1, xref = "paper", y0 = 0, y1 = 1, yref = "paper", line = list(color = "black", width = 1))
-      )
+  if (stage == 4) {
+    # Define colors for each ROI
+    roi_colors <- c(
+      "inj_to_pre_nadir" = "lightblue",
+      "pre_nadir_event" = "lightgreen",
+      "nadir_event" = "pink",
+      "post_nadir_event" = "lightgreen",
+      "post_nadir_to_rec" = "lightblue"
     )
+    
+    # Add shaded regions for each ROI
+    for (roi_name in names(roi_colors)) {
+      roi_data <- data %>% filter(roi == roi_name)
+      if (nrow(roi_data) > 0) {
+        p <- p %>% add_ribbons(
+          data = roi_data,
+          x = ~time,
+          ymin = min(data$pres),
+          ymax = max(data$pres),
+          fillcolor = roi_colors[roi_name],
+          opacity = 0.3,
+          line = list(width = 0),
+          name = roi_name,
+          showlegend = TRUE
+        )
+      }
+    }
+    
+    p <- p %>%
+      add_lines(x = ~time, y = ~pres, name = 'Pressure', yaxis = 'y1', line = list(color = 'red', width = 1)) %>%
+      add_lines(x = ~time, y = ~accmag, name = 'Acceleration', yaxis = 'y2', line = list(color = 'blue', width = 1))
+    
+    #acceleration markers
+    accmag_cols <- names(sensor_summary)[grep("^accmag_\\d+$", names(sensor_summary))]
+    for (accmag_col in accmag_cols) {
+      i <- as.numeric(sub("accmag_", "", accmag_col))
+      time_col <- paste0(accmag_col, "_t")
+      
+      if (time_col %in% names(sensor_summary) &&
+          !is.na(sensor_summary[[accmag_col]]) && !is.na(sensor_summary[[time_col]])) {
+        p <- p %>%
+          add_markers(
+            x = sensor_summary[[time_col]],
+            y = sensor_summary[[accmag_col]],
+            name = paste0("Acc Peak ", i),
+            yaxis = 'y2',
+            marker = list(color = 'orange', size = 10, line = list(color = 'black', width = 1))
+          )
+      }
+    }
+  }
   
-  # Add dynamic points for pressure nadir based on the stage
+  # Add markers for pressure nadir and max 1s nadir
   if (stage == 1) {
     p <- p %>%
       add_markers(
@@ -673,9 +528,7 @@ create_combined_plot <- function(data, sensor_summary, selected_sensor, stage, n
         yanchor = "top",
         font = list(color = 'red')
       )
-  }
-  
-  if (stage == 2 || stage == 4 || stage == 5) {
+  } else if (stage >= 2 && stage <= 4) {
     p <- p %>%
       add_markers(
         x = sensor_summary[["t_nadir"]],
@@ -715,81 +568,65 @@ create_combined_plot <- function(data, sensor_summary, selected_sensor, stage, n
       )
   }
   
-  if (stage == 3 || stage == 4 || stage == 5) {
-    peak_cols <- grep("^accmag_\\d+$", names(sensor_summary), value = TRUE)
-    for (col in peak_cols) {
-      peak_times <- sensor_summary[[paste0(col, "_t")]]
-      peak_values <- sensor_summary[[col]]
-      
-      # Only plot peaks within the passage points
-      if (stage == 5) {
-        t_injection <- sensor_summary$t_injection
-        t_tailwater <- sensor_summary$t_tailwater
-        valid_peaks <- peak_times >= t_injection & peak_times <= t_tailwater
-        peak_times <- peak_times[valid_peaks]
-        peak_values <- peak_values[valid_peaks]
-      }
-      
-      # Only add markers if there are valid peaks to plot
-      if (length(peak_times) > 0 && length(peak_values) > 0) {
-        p <- p %>%
-          add_markers(
-            x = peak_times,
-            y = peak_values,
-            name = paste0(col),
-            yaxis = 'y2',
-            marker = list(color = 'orange', size = 10, line = list(color = 'black', width = 1))
-          )
-      }
-    }
-  }
+  # Layout
+  p <- p %>%
+    layout(
+      xaxis = list(
+        title = if(stage == 5) "Normalized Time" else "Time [s]",
+        zeroline = FALSE,
+        showline = FALSE,
+        showgrid = FALSE,
+        ticks = 'outside',
+        tickcolor = 'black'
+      ),
+      yaxis = list(
+        title = "Pressure [mbar]",
+        side = 'left',
+        zeroline = FALSE,
+        showgrid = FALSE,
+        showline = FALSE,
+        ticks = 'outside',
+        tickcolor = 'black',
+        color = 'red'
+      ),
+      yaxis2 = list(
+        title = "Acceleration magnitude [m/s2]",
+        overlaying = 'y',
+        side = 'right',
+        showgrid = FALSE,
+        zeroline = FALSE,
+        showline = FALSE,
+        ticks = 'outside',
+        tickcolor = 'black',
+        color = 'blue',
+        automargin = TRUE 
+      ),
+      plot_bgcolor = 'white',
+      paper_bgcolor = 'white',
+      showlegend = FALSE,
+      shapes = list(
+        list(type = "line", x0 = 0, x1 = 1, xref = "paper", y0 = 1, y1 = 1, yref = "paper", line = list(color = "black", width = 1)),
+        list(type = "line", x0 = 0, x1 = 1, xref = "paper", y0 = 0, y1 = 0, yref = "paper", line = list(color = "black", width = 1)),
+        list(type = "line", x0 = 0, x1 = 0, xref = "paper", y0 = 0, y1 = 1, yref = "paper", line = list(color = "black", width = 1)),
+        list(type = "line", x0 = 1, x1 = 1, xref = "paper", y0 = 0, y1 = 1, yref = "paper", line = list(color = "black", width = 1))
+      )
+    )
   
-  p
+  return(p)
 }
 
-find_acceleration_peaks <- function(data, batch_summary, selected_sensor, threshold = 49.03, min_gap = 12) {
-  # Set threshold to desired magnitude and set min_gap to time series (0.1s = 12)
-  data <- filter(data, long_id == selected_sensor)
-  peaks <- findpeaks(data$accmag, minpeakheight = threshold, minpeakdistance = min_gap)
+check_sensor <- function(batch_summary, selected_sensor) {
+  is_sens_good <- readline(prompt = "Is sensor data appropriate for analysis? (Y/N): ")
   
-  if (is.null(peaks)) {
-    cat("No acceleration peaks >= 49.03 m/s2 found\n")
-    return(batch_summary)
+  if (toupper(is_sens_good) == "Y") {
+    cat("Sensor data good\n")
+    return(TRUE)
+  } else {
+    cat("Sensor data not appropriate for analysis\n")
+    batch_summary <<- batch_summary %>%
+      mutate(badsens = ifelse(file == selected_sensor, "Y", badsens))
+    return(FALSE)
   }
-  
-  peak_indices <- peaks[, 2]
-  peak_values <- data$accmag[peak_indices]
-  peak_times <- data$time[peak_indices]
-  peak_pres <- data$pres[peak_indices]
-  num_peaks <- length(peak_values)
-  
-  # Update batch_summary with peak values dynamically
-  for (i in seq_along(peak_values)) {
-    accmag_col <- paste0("accmag_", i)
-    time_col <- paste0("accmag_", i, "_t")
-    pres_col <- paste0("accmag_", i, "_p")
-    
-    if (!(accmag_col %in% colnames(batch_summary))) {
-      batch_summary[[accmag_col]] <- NA_real_
-    }
-    if (!(time_col %in% colnames(batch_summary))) {
-      batch_summary[[time_col]] <- NA_real_
-    }
-    if (!(pres_col %in% colnames(batch_summary))) {
-      batch_summary[[pres_col]] <- NA_real_
-    }
-    
-    batch_summary <- batch_summary %>%
-      mutate(
-        !!accmag_col := ifelse(file == selected_sensor, peak_values[i], .data[[accmag_col]]),
-        !!time_col := ifelse(file == selected_sensor, peak_times[i], .data[[time_col]]),
-        !!pres_col := ifelse(file == selected_sensor, peak_pres[i], .data[[pres_col]])
-      )
-  }
-  
-  cat(num_peaks, "acceleration peaks >= 49.03 m/s2 identified and recorded in batch summary\n")
-  
-  return(batch_summary)
 }
 
 process_nadir_value <- function(batch_summary, selected_sensor) {
@@ -943,6 +780,7 @@ calculate_ratio_pressure_change <- function(batch_summary, selected_sensor, max_
 }
 
 prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_sensor, num_rows) {
+  #ROI selection tool
   sensor_data <- data %>% filter(long_id == selected_sensor)
   t_nadir_val <- batch_summary %>% filter(file == selected_sensor) %>% pull(t_nadir)
   nadir_index <- which(sensor_data$time == t_nadir_val)
@@ -951,82 +789,709 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
     stop("Nadir time not found in the data")
   }
   
-  row_start <- max(1, nadir_index - num_rows * 2)
-  row_end <- min(nrow(sensor_data), nadir_index + num_rows * 2)
+  # Create ROI columns if they don't exist
+  roi_columns <- paste0(c("t_start_roi", "t_end_roi"), rep(1:6, each = 2))
   
-  t_injection_val <- sensor_data$time[row_start]
-  t_tailwater_val <- sensor_data$time[row_end]
-  
-  cat("Default injection time (nadir - 2s):", t_injection_val, "\n")
-  cat("Default tailwater time (nadir + 2s):", t_tailwater_val, "\n")
-  
-  use_default <- readline(prompt = "Use these default times? (Y/N): ")
-  
-  if (toupper(use_default) != "Y") {
-    cat("Enter custom injection and tailwater times\n")
-    t_injection_val <- as.numeric(readline(prompt = "Enter injection time value: "))
-    t_tailwater_val <- as.numeric(readline(prompt = "Enter tailwater time value: "))
-    while (is.na(t_injection_val) || is.na(t_tailwater_val)) {
-      cat("Invalid input. Please enter numeric values.\n")
-      t_injection_val <- as.numeric(readline(prompt = "Enter injection time value: "))
-      t_tailwater_val <- as.numeric(readline(prompt = "Enter tailwater time value: "))
+  for (col in roi_columns) {
+    if (!(col %in% colnames(batch_summary))) {
+      batch_summary[[col]] <- NA_real_
     }
   }
   
-  batch_summary <- batch_summary %>%
-    mutate(
-      t_injection = ifelse(file == selected_sensor, t_injection_val, t_injection),
-      t_tailwater = ifelse(file == selected_sensor, t_tailwater_val, t_tailwater)
-    )
+  for (roi in 1:6) {
+    cat(paste("\nROI", roi, ":"))
+    
+    if (roi == 1) {
+      cat(" (Main overall sensor passage ROI)\n")
+      row_start <- max(1, nadir_index - num_rows * 3)
+      row_end <- min(nrow(sensor_data), nadir_index + num_rows * 3)
+      t_start_val <- sensor_data$time[row_start]
+      t_end_val <- sensor_data$time[row_end]
+      cat("Default start time (nadir - 3s):", t_start_val, "\n")
+      cat("Default end time (nadir + 3s):", t_end_val, "\n")
+      prompt <- "Use these default times for the main passage ROI? (Y/N): "
+      
+      use_default <- readline(prompt = prompt)
+      
+      if (toupper(use_default) != "Y") {
+        cat(paste("Enter custom start and end times for ROI", roi, "\n"))
+        t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
+        t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
+        
+        while (is.na(t_start_val) || is.na(t_end_val) || t_start_val >= t_end_val) {
+          cat("Invalid input. Please ensure start time is less than end time and both are numeric.\n")
+          t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
+          t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
+        }
+      }
+      
+    } else if (roi == 2) {
+      cat(" (Nadir event ROI)\n")
+      row_start <- max(1, nadir_index - 10)
+      row_end <- min(nrow(sensor_data), nadir_index + 10)
+      t_start_val <- sensor_data$time[row_start]
+      t_end_val <- sensor_data$time[row_end]
+      cat("Default nadir event start time (nadir - 0.1s):", t_start_val, "\n")
+      cat("Default nadir event end time (nadir + 0.1s):", t_end_val, "\n")
+      prompt <- "Use these default times for nadir event? (Y/N): "
+      
+      use_default <- readline(prompt = prompt)
+      
+      if (toupper(use_default) != "Y") {
+        cat(paste("Enter custom start and end times for ROI", roi, "\n"))
+        t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
+        t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
+        
+        while (is.na(t_start_val) || is.na(t_end_val) || t_start_val >= t_end_val) {
+          cat("Invalid input. Please ensure start time is less than end time and both are numeric.\n")
+          t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
+          t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
+        }
+      }
+      
+    } else if (roi == 3) {
+      cat(" (Pre-nadir ROI)\n")
+      t_start_val <- sensor_data$time[max(1, which(sensor_data$time == batch_summary$t_start_roi2[batch_summary$file == selected_sensor]) - num_rows)]
+      t_end_val <- sensor_data$time[which(sensor_data$time == batch_summary$t_start_roi2[batch_summary$file == selected_sensor])]
+      cat("Default start time (nadir ROI start - 1s):", t_start_val, "\n")
+      cat("End time:", t_end_val, "\n")
+      prompt <- "Use default start time for pre-nadir ROI? (Y/N): "
+      
+      use_default <- readline(prompt = prompt)
+      
+      if (toupper(use_default) != "Y") {
+        cat("Enter custom start time for pre-nadir ROI\n")
+        t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
+        
+        while (is.na(t_start_val) || t_start_val >= t_end_val) {
+          cat("Invalid input. Please ensure start time is less than end time and is numeric.\n")
+          t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
+        }
+      }
+      
+    } else if (roi == 4) {
+      cat(" (Post-nadir ROI)\n")
+      t_start_val <- sensor_data$time[which(sensor_data$time == batch_summary$t_end_roi2[batch_summary$file == selected_sensor])]
+      t_end_val <- sensor_data$time[min(nrow(sensor_data), which(sensor_data$time == batch_summary$t_end_roi2[batch_summary$file == selected_sensor]) + num_rows)]
+      cat("Start time:", t_start_val, "\n")
+      cat("Default end time (nadir ROI end + 1s):", t_end_val, "\n")
+      prompt <- "Use default end time for post-nadir ROI? (Y/N): "
+      
+      use_default <- readline(prompt = prompt)
+      
+      if (toupper(use_default) != "Y") {
+        cat("Enter custom end time for post-nadir ROI\n")
+        t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
+        
+        while (is.na(t_end_val) || t_end_val <= t_start_val) {
+          cat("Invalid input. Please ensure end time is greater than start time and is numeric.\n")
+          t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
+        }
+      }
+      
+    } else if (roi == 5) {
+      t_start_val <- batch_summary$t_start_roi1[batch_summary$file == selected_sensor]
+      t_end_val <- batch_summary$t_start_roi3[batch_summary$file == selected_sensor]
+      cat("ROI 5 automatically labelled (inj_to_pre_nadir)\n")
+      cat("Start time:", t_start_val, "\n")
+      cat("End time:", t_end_val, "\n")
+    } else if (roi == 6) {
+      t_start_val <- batch_summary$t_end_roi4[batch_summary$file == selected_sensor]
+      t_end_val <- batch_summary$t_end_roi1[batch_summary$file == selected_sensor]
+      cat("ROI 6 automatically labelled (post_nadir_to_rec)\n")
+      cat("Start time:", t_start_val, "\n")
+      cat("End time:", t_end_val, "\n")
+    }
+    
+    batch_summary <- batch_summary %>%
+      mutate(
+        !!paste0("t_start_roi", roi) := ifelse(file == selected_sensor, t_start_val, !!sym(paste0("t_start_roi", roi))),
+        !!paste0("t_end_roi", roi) := ifelse(file == selected_sensor, t_end_val, !!sym(paste0("t_end_roi", roi)))
+      )
+  }
   
-  cat("Injection and tailwater times recorded in batch summary\n")
+  cat("Start and end times for all ROIs recorded in batch summary\n")
   
   batch_summary
 }
 
 assign_passage_points <- function(data, batch_summary, selected_sensor, sample_rate) {
-  cat("Assigning passage points for sensor:", selected_sensor, "\n")
-  
-  # Extract injection, nadir, and tailwater times from batch_summary
-  t_injection_val <- batch_summary %>% filter(file == selected_sensor) %>% pull(t_injection)
-  t_nadir_val <- batch_summary %>% filter(file == selected_sensor) %>% pull(t_nadir)
-  t_tailwater_val <- batch_summary %>% filter(file == selected_sensor) %>% pull(t_tailwater)
-  
-  cat("Injection time:", t_injection_val, "\n")
-  cat("Nadir time:", t_nadir_val, "\n")
-  cat("Tailwater time:", t_tailwater_val, "\n")
-  
-
-  # Ensure passage_point column exists and is initialized as NA
-  if (!"passage_point" %in% colnames(data)) {
-    data$passage_point <- NA_character_
-  }
+  cat("\nAssigning passage points for sensor:", selected_sensor, "\n")
   
   # Filter the data for the selected sensor
   data_sensor <- data %>% filter(long_id == selected_sensor)
   
-  # Assign passage points based on time ranges
+  # Get all ROI times
+  roi_times <- batch_summary %>%
+    filter(file == selected_sensor) %>%
+    select(starts_with("t_start_roi"), starts_with("t_end_roi"), t_nadir)
+  
   data_sensor <- data_sensor %>%
-    mutate(passage_point_new = case_when(
-      time >= t_injection_val & time < t_nadir_val ~ "pre_nadir",
-      time >= t_nadir_val & time <= t_tailwater_val ~ "post_nadir",
-      TRUE ~ NA_character_
-    ))
+    mutate(
+      passage_point = case_when(
+        time >= roi_times$t_start_roi1 & time < roi_times$t_nadir ~ "pre_nadir",
+        time >= roi_times$t_nadir & time <= roi_times$t_end_roi1 ~ "post_nadir",
+        TRUE ~ NA_character_
+      ),
+      roi = case_when(
+        time >= roi_times$t_start_roi5 & time < roi_times$t_end_roi5 ~ "inj_to_pre_nadir",
+        time >= roi_times$t_start_roi3 & time < roi_times$t_end_roi3 ~ "pre_nadir_event",
+        time >= roi_times$t_start_roi2 & time < roi_times$t_end_roi2 ~ "nadir_event",
+        time >= roi_times$t_start_roi4 & time < roi_times$t_end_roi4 ~ "post_nadir_event",
+        time >= roi_times$t_start_roi6 & time <= roi_times$t_end_roi6 ~ "post_nadir_to_rec",
+        TRUE ~ NA_character_
+      )
+    )
   
-  # Convert passage_point_new to factor
-  data_sensor <- data_sensor %>%
-    mutate(passage_point_new = factor(passage_point_new, levels = c("pre_nadir", "post_nadir")))
+  cat("Passage points and ROIs assigned to", selected_sensor, "\n")
   
-  cat("Passage points assigned to", selected_sensor, "\n")
-  
-  # Merge the passage points back into the original data
-  data <- data %>%
-    left_join(select(data_sensor, time, long_id, passage_point_new), by = c("time", "long_id")) %>%
-    mutate(passage_point = coalesce(passage_point_new, passage_point)) %>%
-    select(-passage_point_new)
+  # Update the data for the selected sensor
+  rows_to_update <- which(data$long_id == selected_sensor)
+  data[rows_to_update, names(data_sensor)] <- data_sensor
   
   return(data)
 }
+
+
+max_acceleration_extract <- function(data, batch_summary, selected_sensor) {
+  # extract the max acceleration value in each ROI
+  # Filter data for the selected sensor
+  sensor_data <- data %>% filter(long_id == selected_sensor)
+  
+  # Create columns if they don't exist
+  new_columns <- c(
+    paste0("max_accmag_roi", 1:6),
+    paste0("max_accmag_time_roi", 1:6)
+  )
+  for (col in new_columns) {
+    if (!(col %in% colnames(batch_summary))) {
+      batch_summary[[col]] <- NA_real_
+    }
+  }
+  
+  # Extract max acceleration
+  for (roi in 1:6) {
+    t_start <- batch_summary %>% 
+      filter(file == selected_sensor) %>% 
+      pull(!!paste0("t_start_roi", roi))
+    t_end <- batch_summary %>% 
+      filter(file == selected_sensor) %>% 
+      pull(!!paste0("t_end_roi", roi))
+    
+    roi_data <- sensor_data %>% 
+      filter(time >= t_start & time <= t_end)
+    
+    max_accmag <- max(roi_data$accmag, na.rm = TRUE)
+    max_accmag_time <- roi_data$time[which.max(roi_data$accmag)]
+    
+    # Update batch_summary
+    batch_summary <- batch_summary %>%
+      mutate(
+        !!paste0("max_accmag_roi", roi) := ifelse(file == selected_sensor, max_accmag, !!sym(paste0("max_accmag_roi", roi))),
+        !!paste0("max_accmag_time_roi", roi) := ifelse(file == selected_sensor, max_accmag_time, !!sym(paste0("max_accmag_time_roi", roi)))
+      )
+  }
+  
+# Print results to console
+  cat("\nMaximum acceleration values:\n")
+  cat("ROI 1 (Main overall sensor passage) max acceleration:", batch_summary$max_accmag_roi1[batch_summary$file == selected_sensor], "\n")
+  cat("ROI 2 (nadir event) max acceleration:", batch_summary$max_accmag_roi2[batch_summary$file == selected_sensor], "\n")
+  cat("ROI 3 (pre-nadir ROI) acceleration:", batch_summary$max_accmag_roi3[batch_summary$file == selected_sensor], "\n")
+  cat("ROI 4 (post-nadir ROI) acceleration:", batch_summary$max_accmag_roi4[batch_summary$file == selected_sensor], "\n")
+  cat("ROI 5 (inection to pre-nadir ROI) acceleration:", batch_summary$max_accmag_roi5[batch_summary$file == selected_sensor], "\n")
+  cat("ROI 6 (post-nadir to recovery ROI) acceleration:", batch_summary$max_accmag_roi6[batch_summary$file == selected_sensor], "\n")
+  
+  return(batch_summary)
+}
+
+nadir_acceleration_distance <- function(data, batch_summary, selected_sensor) {
+  # Extract relevant values from batch_summary
+  sensor_summary <- batch_summary[batch_summary$file == selected_sensor, ]
+  t_nadir <- sensor_summary$t_nadir
+  max_accmag_time_roi2 <- sensor_summary$max_accmag_time_roi2
+  
+  # Find the row indices for nadir and max acceleration
+  nadir_index <- which.min(abs(data$time - t_nadir))
+  max_acc_index <- which.min(abs(data$time - max_accmag_time_roi2))
+  
+  # Calculate the row difference
+  row_diff <- max_acc_index - nadir_index
+  
+  # Calculate the time difference using fixed time step
+  fixed_time_step <- 0.01  # 0.01 seconds per row
+  max_nadir_acc_dist <- abs(row_diff) * fixed_time_step
+  
+  # Determine the position relative to nadir
+  if (row_diff < 0) {
+    max_nadir_acc_position <- "before_nadir"
+  } else if (row_diff > 0) {
+    max_nadir_acc_position <- "after_nadir"
+  } else {
+    max_nadir_acc_position <- "on_nadir"
+  }
+  
+  # Update batch_summary with new values
+  batch_summary <- batch_summary %>%
+    mutate(
+      max_nadir_acc_dist = ifelse(file == selected_sensor, max_nadir_acc_dist, max_nadir_acc_dist),
+      max_nadir_acc_position = ifelse(file == selected_sensor, max_nadir_acc_position, max_nadir_acc_position)
+    )
+  
+  # Print message to console
+  cat("\nAcceleration time relative to nadir (nadir ROI only):")
+  cat(sprintf("\nMaximum acceleration in nadir ROI occurred %.3f seconds (%d rows) %s.\n", 
+              max_nadir_acc_dist, abs(row_diff), max_nadir_acc_position))
+  
+  return(batch_summary)
+}
+
+find_acceleration_peaks <- function(data, batch_summary, selected_sensor, 
+                                    peak = 49.03, peak_gap = 5, drop = 5, drop_gap = 1,
+                                    group_window_multiplier = 3) {
+  # Filter data within t_start_roi1 to t_end_roi1 (overall passage)
+  roi_start <- batch_summary$t_start_roi1[batch_summary$file == selected_sensor]
+  roi_end <- batch_summary$t_end_roi1[batch_summary$file == selected_sensor]
+  data <- filter(data, long_id == selected_sensor, time >= roi_start, time <= roi_end)
+  
+  cat("\nDebug: Processing sensor:", selected_sensor, "\n")
+  cat("Debug: ROI start:", roi_start, "ROI end:", roi_end, "\n")
+  
+  # Find initial peaks
+  peaks <- findpeaks(data$accmag, minpeakheight = peak, minpeakdistance = peak_gap)
+  
+  if (is.null(peaks) || nrow(peaks) == 0) {
+    cat("No acceleration peaks meeting the criteria were found\n")
+    return(batch_summary)
+  }
+  
+  peak_indices <- peaks[, 2]
+  peak_values <- data$accmag[peak_indices]
+  peak_times <- data$time[peak_indices]
+  
+  cat("\nDebug: Initial peaks found:", length(peak_indices), "\n")
+  cat("Debug: Peak times:", paste(peak_times, collapse = ", "), "\n")
+  cat("Debug: Peak values:", paste(peak_values, collapse = ", "), "\n")
+  
+  # Sort peaks by time
+  sorted_order <- order(peak_times)
+  peak_indices <- peak_indices[sorted_order]
+  peak_values <- peak_values[sorted_order]
+  peak_times <- peak_times[sorted_order]
+  
+  cat("\nDebug: Sorted peak times:", paste(peak_times, collapse = ", "), "\n")
+  cat("Debug: Sorted peak values:", paste(peak_values, collapse = ", "), "\n")
+  
+  if (length(peak_indices) > 1) {
+    group_window <- peak_gap * group_window_multiplier
+    cat("\nDebug: New calculated group window:", group_window, "\n")
+    
+    groups <- cumsum(c(1, diff(peak_indices) > group_window))
+    cat("Debug: Group assignments:", paste(groups, collapse = ", "), "\n")
+    
+    valid_peaks <- numeric()
+    
+    for (g in unique(groups)) {
+      group_indices <- peak_indices[groups == g]
+      group_values <- peak_values[groups == g]
+      
+      cat("\nDebug: Processing group", g, "\n")
+      cat("Debug: Group indices:", paste(group_indices, collapse = ", "), "\n")
+      cat("Debug: Group values:", paste(group_values, collapse = ", "), "\n")
+      
+      if (length(group_indices) == 1) {
+        valid_peaks <- c(valid_peaks, group_indices)
+        cat("Debug: Single peak in group, keeping it\n")
+      } else {
+        drops <- sapply(1:(length(group_indices)-1), function(i) {
+          between_peaks <- data$accmag[(group_indices[i]+1):(group_indices[i+1]-1)]
+          drop_runs <- rle(between_peaks <= drop)
+          any(drop_runs$lengths[drop_runs$values] >= drop_gap)
+        })
+        
+        cat("Debug: Drops detected:", paste(drops, collapse = ", "), "\n")
+        
+        if (any(drops)) {
+          peaks_to_keep <- c(TRUE, drops)
+          new_valid_peaks <- group_indices[peaks_to_keep]
+          valid_peaks <- c(valid_peaks, new_valid_peaks)
+          cat("Debug: Keeping multiple peaks due to drops:", paste(new_valid_peaks, collapse = ", "), "\n")
+        } else {
+          highest_peak <- group_indices[which.max(group_values)]
+          valid_peaks <- c(valid_peaks, highest_peak)
+          cat("Debug: No drops, keeping only the highest peak:", highest_peak, "\n")
+        }
+      }
+      
+      # Check distance to nearest peak outside the group
+      if (g < max(groups)) {
+        next_group_start <- min(peak_indices[groups > g])
+        distance_to_next <- next_group_start - max(group_indices)
+        cat("\nDebug: Distance to next group:", distance_to_next, "\n")
+      }
+      if (g > 1) {
+        prev_group_end <- max(peak_indices[groups < g])
+        distance_to_prev <- min(group_indices) - prev_group_end
+        cat("\nDebug: Distance to previous group:", distance_to_prev, "\n")
+      }
+    }
+  } else {
+    valid_peaks <- peak_indices
+    cat("\nDebug: Only one peak found, keeping it\n")
+  }
+  
+  # Update batch_summary with peak values
+  peak_values <- data$accmag[valid_peaks]
+  peak_times <- data$time[valid_peaks]
+  peak_pres <- data$pres[valid_peaks]
+  
+  cat("\nDebug: Final valid peaks:", paste(valid_peaks, collapse = ", "), "\n")
+  cat("Debug: Final peak times:", paste(peak_times, collapse = ", "), "\n")
+  cat("Debug: Final peak values:", paste(peak_values, collapse = ", "), "\n")
+  
+  for (i in seq_along(peak_values)) {
+    accmag_col <- paste0("accmag_", i)
+    time_col <- paste0("accmag_", i, "_t")
+    pres_col <- paste0("accmag_", i, "_p")
+    
+    if (!(accmag_col %in% colnames(batch_summary))) {
+      batch_summary[[accmag_col]] <- NA_real_
+    }
+    if (!(time_col %in% colnames(batch_summary))) {
+      batch_summary[[time_col]] <- NA_real_
+    }
+    if (!(pres_col %in% colnames(batch_summary))) {
+      batch_summary[[pres_col]] <- NA_real_
+    }
+    
+    batch_summary <- batch_summary %>%
+      mutate(
+        !!accmag_col := ifelse(file == selected_sensor, peak_values[i], .data[[accmag_col]]),
+        !!time_col := ifelse(file == selected_sensor, peak_times[i], .data[[time_col]]),
+        !!pres_col := ifelse(file == selected_sensor, peak_pres[i], .data[[pres_col]])
+      )
+  }
+  
+  # Count peaks in each ROI
+  roi_categories <- unique(data$roi)
+  for (category in roi_categories) {
+    count_col <- paste0(category, "_accmag_count")
+    if (!(count_col %in% colnames(batch_summary))) {
+      batch_summary[[count_col]] <- 0
+    }
+    
+    category_peaks <- sum(data$roi[valid_peaks] == category)
+    
+    batch_summary <- batch_summary %>%
+      mutate(!!count_col := ifelse(file == selected_sensor, category_peaks, .data[[count_col]]))
+    
+    cat("\nCategory:", category, "\n")
+    cat("Number of peaks:", category_peaks, "\n")
+    if (category_peaks > 0) {
+      cat("Peak times:", paste(peak_times[data$roi[valid_peaks] == category], collapse = ", "), "\n")
+      cat("Peak values:", paste(peak_values[data$roi[valid_peaks] == category], collapse = ", "), "\n")
+    }
+  }
+  
+  cat("\nTotal number of peaks:", length(valid_peaks), "\n")
+  
+  return(batch_summary)
+}
+
+time_normalization <- function(data, selected_sensor) {
+  # normalize time series for overall passage (ROI 1) by 0 - 1 with nadir at 0.5
+  # Ensure time_norm column exists and is initialized as 0
+  if (!"time_norm" %in% colnames(data)) {
+    data$time_norm <- 0
+  }
+  
+  # Filter data for the selected sensor
+  data_sensor <- filter(data, long_id == selected_sensor)
+  
+  # Identify the start and end times for normalization
+  start_time <- min(data_sensor$time[data_sensor$passage_point == 'pre_nadir'], na.rm = TRUE)
+  mid_time <- min(data_sensor$time[data_sensor$passage_point == 'post_nadir'], na.rm = TRUE)
+  end_time <- max(data_sensor$time[data_sensor$passage_point == 'post_nadir'], na.rm = TRUE)
+  
+  
+  # Calculate normalized time values
+  data_sensor <- data_sensor %>%
+    mutate(time_norm_new = case_when(
+      time <= start_time ~ 0,
+      time >= end_time ~ 1,
+      time > start_time & time < mid_time ~ (time - start_time) / (mid_time - start_time) * 0.5,
+      time >= mid_time & time <= end_time ~ 0.5 + (time - mid_time) / (end_time - mid_time) * 0.5
+    ))
+  
+  # Merge the normalized time back into the original data
+  data <- data %>%
+    left_join(select(data_sensor, time, long_id, time_norm_new), by = c("time", "long_id")) %>%
+    mutate(time_norm = coalesce(time_norm_new, time_norm)) %>%
+    select(-time_norm_new)
+  
+  cat("Injection to tailwater passage time normalization complete\n")
+  return(data)
+}
+
+update_global_environment <- function(data, batch_summary, sample_rate) {
+  if (sample_rate == 250) {
+    data_250hz <- data
+    assign("data_250hz", data_250hz, envir = .GlobalEnv)
+  } else if (sample_rate == 100) {
+    data_100hz <- data
+    assign("data_100hz", data_100hz, envir = .GlobalEnv)
+  } else if (sample_rate == "100_imp") {
+    data_100_imp <- data
+    assign("data_100_imp", data_100_imp, envir = .GlobalEnv)
+  } else if (sample_rate == "2000_hig") {
+    data_2000_hig <- data
+    assign("data_2000_hig", data_2000_hig, envir = .GlobalEnv)
+  }
+  assign("batch_summary", batch_summary, envir = .GlobalEnv)
+}
+
+
+#BDS analysis tool prototype
+BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, sample_rate) {
+  
+  filter_result <- filter_batch_summary(batch_summary, sample_rate)
+  if (!is.null(filter_result$message)) {
+    cat(filter_result$message)
+    cat("BDS Analysis tool ended.\n")
+    return(invisible())
+  }
+  
+  # Update the data assignment logic
+  data <- if (sample_rate == 250) {
+    data_250hz
+  } else if (sample_rate == 100) {
+    data_100hz
+  } else if (sample_rate == "100_imp") {
+    data_100_imp
+  } else if (sample_rate == "2000_hig") {
+    data_2000_hig
+  }
+  
+  # Create list of sensors available for processing.
+  # Add num_rows for calculating max pressure <1s nadir
+  sensors <- filter_result$sensors
+  num_rows <- filter_result$num_rows
+  # Prompt user to select a sensor
+  selected_sensor <- prompt_user_to_select_sensor(sensors)
+  # Create sensor summary
+  sensor_summary <- batch_summary %>% filter(file == selected_sensor)
+  time_range <- max(data$time) - min(data$time)
+  
+  # Draw plot for nadir value check
+  plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 1)
+  print(plotly_plot)
+  
+  # Check the sensor for good data
+  result <- check_sensor(batch_summary, selected_sensor)
+  
+  #rest of function is within a loop determined by result of check_sensor function
+  
+  if (!result) {
+    cat("Stopping BDS analysis...\n")
+  } else {
+    cat("Proceeding with BDS analysis...\n")
+    
+    # Process nadir value. User can input new value if needed
+    batch_summary <- process_nadir_value(batch_summary, selected_sensor)
+    
+    # Calculate max pressure within 1s before the nadir
+    batch_summary <- calculate_max_pressure_before_nadir(data, batch_summary, selected_sensor, num_rows)
+    
+    # Update plot with new nadir value and 1s max pressure
+    sensor_summary <- batch_summary %>% filter(file == selected_sensor)
+    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 2, num_rows)
+    print(plotly_plot)
+    
+    # Process 1s max nadir value. User can input new value if needed
+    batch_summary <- process_max_p_1s_nadir(batch_summary, selected_sensor)
+    
+    # Calculate rate pressure change
+    batch_summary <- calculate_rate_pressure_change(batch_summary, selected_sensor)
+    
+    #Use default acclimaiton pressure or set new
+    max_acclim <- set_max_acclimation_pressure()
+    
+    # Calculate ratio pressure change and log ratio pressure change
+    batch_summary <- calculate_ratio_pressure_change(batch_summary, selected_sensor, max_acclim)
+    
+    # Prompt user to continue with ROI selection
+    continue_injection <- readline(prompt = "Enter Y when ready to continue with ROI selection: ")
+    if (toupper(continue_injection) != "Y") {
+      cat("BDS analysis tool ended.\n")
+      return(invisible())
+    }
+    
+    # Draw plot for ROI selection
+    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 3)
+    print(plotly_plot)
+    
+    # Prompt user to enter ROI
+    batch_summary <- prompt_for_injection_tailwater_times(data, batch_summary, selected_sensor, num_rows)
+    
+    # Assign passage points
+    data <- assign_passage_points(data, batch_summary, selected_sensor, sample_rate)
+    
+    #Find max acceleration values within each ROI
+    batch_summary <- max_acceleration_extract(data, batch_summary, selected_sensor)
+    
+    #determine if max acceleration in nadir roi occured before, on or after nadir, and time difference
+    batch_summary <- nadir_acceleration_distance(data, batch_summary, selected_sensor)
+    
+    #Find acceleration peaks with given criteria
+    batch_summary <- find_acceleration_peaks(data, batch_summary, selected_sensor)
+    
+    #Update sensor_summary and ensure NA columns are dropped from other sensors. 
+    #May be redundant, but plot fucntion relises on it at the moment
+    sensor_summary <- batch_summary %>%
+      filter(file == selected_sensor) %>%
+      select_if(~ any(!is.na(.)))
+    
+    # Draw plot using ROI 1 (either 6s, or user input)
+    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 4)
+    print(plotly_plot)
+    
+    #Prompt user to continue with time series normalization
+    continue_normal <- readline(prompt = "Enter Y when ready to continue with passage time series normalization: ")
+    if (toupper(continue_normal) != "Y") {
+      cat("BDS analysis tool ended.\n")
+      return(invisible())
+    }
+    
+    # Perform time series normalization on ROI 1 and update data
+    data <- time_normalization(data, selected_sensor)
+    
+    # Draw plot with normalized ROI 1
+    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 5)
+    print(plotly_plot)
+    
+    # Update batch summary with processed status
+    batch_summary <- batch_summary %>%
+      mutate(pres_processed = ifelse(file == selected_sensor, "Y", pres_processed),
+             acc_processed = ifelse(file == selected_sensor, "Y", acc_processed))
+  }
+  
+  #if the result was not true (e.g., user said Yes to bad sensor), then update batch_summary to say bad sensor
+  
+  if (!result) {
+    batch_summary <- batch_summary %>%
+      mutate(badsens = ifelse(file == selected_sensor, "Y", badsens))
+  }
+  
+  # Update global environment to reassign batch_summary and data.
+  update_global_environment(data, batch_summary, sample_rate)
+  
+  # BDS analysis complete. Prompt user to continue or end
+  cat("BDS analysis complete for", selected_sensor, "\n")
+  continue <- readline(prompt = "Continue with BDS analysis? (Y/N): ")
+  if (toupper(continue) == "Y") {
+    BDSAnalysisTool(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, sample_rate)
+  } else {
+    cat("BDS Analysis tool ended\n")
+  }
+  # End of BDS analysis   
+}
+
+
+
+##4.1 Misc####
+
+add_treatment <- function(data, data_name) {
+  # Define the possible entries
+  pump_rpm_choices <- c(400, 500, 600, 700)
+  inj_pos_choices <- c('us_pump_1_c', 'us_pump_1_h', 'us_pump_1_l', 'us_pump_2_c', 'us_pump_2_h', 'us_pump_2_l', 'ds_pump')
+  treatment_choices <- c(
+    '400_control', '400_impact_us1c', '400_impact_us1h', '400_impact_us1l', '400_impact_us2c', '400_impact_us2h', '400_impact_us2l', 
+    '500_control', '500_impact_us1c', '500_impact_us1h', '500_impact_us1l', '500_impact_us2c', '500_impact_us2h', '500_impact_us2l',
+    '600_control', '600_impact_us1c', '600_impact_us1h', '600_impact_us1l', '600_impact_us2c', '600_impact_us2h', '600_impact_us2l',
+    '700_control', '700_impact_us1c', '700_impact_us1h', '700_impact_us1l', '700_impact_us2c', '700_impact_us2h', '700_impact_us2l'
+  )
+  pump_rpm <- pump_rpm_choices[menu(pump_rpm_choices, title = "Select Pump RPM:")]
+  inj_pos <- inj_pos_choices[menu(inj_pos_choices, title = "Select Injection position:")]
+  treatment <- treatment_choices[menu(treatment_choices, title = "Select Treatment:")]
+  cat("Selected values:\n")
+  cat("pump_rpm:", pump_rpm, "\n")
+  cat("inj_pos:", inj_pos, "\n")
+  cat("treatment:", treatment, "\n")
+  data <- data %>%
+    mutate(
+      pump_rpm = factor(pump_rpm),
+      inj_pos = factor(inj_pos),
+      treatment = factor(treatment)
+    )
+  assign(data_name, data, envir = .GlobalEnv)
+  cat(paste("Treatment variables assigned to", data_name, "\n"))
+}
+
+subset_by_long_id <- function(data) {
+  unique_ids <- unique(data$long_id)
+  
+  for (id in unique_ids) {
+    subset_data <- data %>% filter(long_id == id)
+    subset_name <- as.character(id)
+    assign(subset_name, subset_data, envir = .GlobalEnv)
+    cat(paste("Created subset:", subset_name, "\n"))
+  }
+}
+
+save_data <- function(batch_summary, data_100hz, data_250hz, data_100_imp, data_2000_hig) {
+  # Check relevant data class (100, 250, or 100_imp)
+  cat("Enter the sample rate (100, 250, 100_imp or 2000_hig\n")
+  sample_rate <- readline(prompt = "Sample rate: ")
+  if (!sample_rate %in% c("100", "250", "100_imp", "2000_imp")) {
+    stop("Invalid sample rate. Please enter 100, 250, 100_imp or 2000_hig.")
+  }
+  
+  # Check if pres_processed and acc_processed all = Y
+  if (all(batch_summary$pres_processed == "Y") && all(batch_summary$acc_processed == "Y")) {
+    message <- "Batch processing complete, proceed with saving? (Y/N): "
+  } else {
+    message <- "Caution: Batch processing incomplete, proceed with saving? (Y/N): "
+  }
+  
+  proceed <- readline(prompt = message)
+  if (toupper(proceed) != "Y") {
+    cat("Saving process aborted.\n")
+    return(invisible())
+  }
+  
+  # Prompt user to enter batch name
+  batch_name <- readline(prompt = "Enter batch name: ")
+  
+  cat("Saving batch summary and data file...\n")
+  
+  # Save batch_summary and data_ as .csv files
+  output_dir <- "./R_output_files"
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir)
+  }
+  
+  batch_summary_file <- file.path(output_dir, paste0(batch_name, "_batch_summary.csv"))
+  write.csv(batch_summary, batch_summary_file, row.names = FALSE)
+  
+  # Filter data_ by passage_point to remove any NA values
+  if (sample_rate == "100") {
+    data_to_save <- data_100hz %>% filter(!is.na(passage_point))
+  } else if (sample_rate == "250") {
+    data_to_save <- data_250hz %>% filter(!is.na(passage_point))
+  } else if (sample_rate == "100_imp") {
+    data_to_save <- data_100_imp %>% filter(!is.na(passage_point))
+  } else if (sample_rate == "2000_hig") {
+    data_to_save <- data_2000_hig %>% filter(!is.na(passage_point))
+  } else {
+    stop("Invalid sample rate.")
+  }
+  
+  data_file <- file.path(output_dir, paste0(batch_name, "_data_", sample_rate, ".csv"))
+  write.csv(data_to_save, data_file, row.names = FALSE)
+  
+  cat("Files saved successfully.\n")
+}
+
+
 
 assign_passage_points_manual <- function(sample_rate, batch_summary) {
   cat("Assigning passage points for sample rate:", sample_rate, "\n")
@@ -1085,40 +1550,7 @@ assign_passage_points_manual <- function(sample_rate, batch_summary) {
   cat("Passage points assignment completed and data updated in the global environment.\n")
 }
 
-time_normalization <- function(data, selected_sensor) {
-  
-  # Ensure time_norm column exists and is initialized as 0
-  if (!"time_norm" %in% colnames(data)) {
-    data$time_norm <- 0
-  }
-  
-  # Filter data for the selected sensor
-  data_sensor <- filter(data, long_id == selected_sensor)
-  
-  # Identify the start and end times for normalization
-  start_time <- min(data_sensor$time[data_sensor$passage_point == 'pre_nadir'], na.rm = TRUE)
-  mid_time <- min(data_sensor$time[data_sensor$passage_point == 'post_nadir'], na.rm = TRUE)
-  end_time <- max(data_sensor$time[data_sensor$passage_point == 'post_nadir'], na.rm = TRUE)
-  
-  
-  # Calculate normalized time values
-  data_sensor <- data_sensor %>%
-    mutate(time_norm_new = case_when(
-      time <= start_time ~ 0,
-      time >= end_time ~ 1,
-      time > start_time & time < mid_time ~ (time - start_time) / (mid_time - start_time) * 0.5,
-      time >= mid_time & time <= end_time ~ 0.5 + (time - mid_time) / (end_time - mid_time) * 0.5
-    ))
-  
-  # Merge the normalized time back into the original data
-  data <- data %>%
-    left_join(select(data_sensor, time, long_id, time_norm_new), by = c("time", "long_id")) %>%
-    mutate(time_norm = coalesce(time_norm_new, time_norm)) %>%
-    select(-time_norm_new)
-  
-  cat("Injection to tailwater passage time normalization complete\n")
-  return(data)
-}
+
 
 time_normalization_manual <- function(sample_rate, batch_summary) {
   cat("Performing time normalization for sample rate:", sample_rate, "\n")
@@ -1177,172 +1609,4 @@ time_normalization_manual <- function(sample_rate, batch_summary) {
   assign(data_name, data, envir = .GlobalEnv)
   
   cat("Time normalization completed and data updated in the global environment.\n")
-}
-
-update_global_environment <- function(data, batch_summary, sample_rate) {
-  if (sample_rate == 250) {
-    data_250hz <- data
-    assign("data_250hz", data_250hz, envir = .GlobalEnv)
-  } else if (sample_rate == 100) {
-    data_100hz <- data
-    assign("data_100hz", data_100hz, envir = .GlobalEnv)
-  } else if (sample_rate == "100_imp") {
-    data_100_imp <- data
-    assign("data_100_imp", data_100_imp, envir = .GlobalEnv)
-  } else if (sample_rate == "2000_hig") {
-    data_2000_hig <- data
-    assign("data_2000_hig", data_2000_hig, envir = .GlobalEnv)
-  }
-  assign("batch_summary", batch_summary, envir = .GlobalEnv)
-}
-
-check_sensor <- function(batch_summary, selected_sensor) {
-  is_sens_good <- readline(prompt = "Is sensor data appropriate for analysis? (Y/N): ")
-  
-  if (toupper(is_sens_good) == "Y") {
-    cat("Sensor data good\n")
-    return(TRUE)
-  } else {
-    cat("Sensor data not appropriate for analysis\n")
-    batch_summary <<- batch_summary %>%
-      mutate(badsens = ifelse(file == selected_sensor, "Y", badsens))
-    return(FALSE)
-  }
-}
-
-
-#BDS analysis tool prototype
-BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, sample_rate) {
-  
-  filter_result <- filter_batch_summary(batch_summary, sample_rate)
-  if (!is.null(filter_result$message)) {
-    cat(filter_result$message)
-    cat("BDS Analysis tool ended.\n")
-    return(invisible())
-  }
-  
-  # Update the data assignment logic
-  data <- if (sample_rate == 250) {
-    data_250hz
-  } else if (sample_rate == 100) {
-    data_100hz
-  } else if (sample_rate == "100_imp") {
-    data_100_imp
-  } else if (sample_rate == "2000_hig") {
-    data_2000_hig
-  }
-  
-  # Create list of sensors available for processing.
-  # Add num_rows for calculating max pressure <1s nadir
-  sensors <- filter_result$sensors
-  num_rows <- filter_result$num_rows
-  # Prompt user to select a sensor
-  selected_sensor <- prompt_user_to_select_sensor(sensors)
-  # Create sensor summary
-  sensor_summary <- batch_summary %>% filter(file == selected_sensor)
-  time_range <- max(data$time) - min(data$time)
-  
-  # Draw plot for nadir value check
-  plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 1)
-  print(plotly_plot)
-  
-  # check_sensor function here
-  result <- check_sensor(batch_summary, selected_sensor)
-  
-  if (!result) {
-    cat("Stopping BDS analysis...\n")
-  } else {
-    cat("Proceeding with BDS analysis...\n")
-    
-    # Process nadir value. User can input new value if needed
-    batch_summary <- process_nadir_value(batch_summary, selected_sensor)
-    
-    # Calculate max pressure within 1s before the nadir
-    batch_summary <- calculate_max_pressure_before_nadir(data, batch_summary, selected_sensor, num_rows)
-    
-    # Update plot with new nadir value and 1s max pressure
-    sensor_summary <- batch_summary %>% filter(file == selected_sensor)
-    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 2, num_rows)
-    print(plotly_plot)
-    
-    # Process 1s max nadir value. User can input new value if needed
-    batch_summary <- process_max_p_1s_nadir(batch_summary, selected_sensor)
-    
-    # Calculate rate pressure change
-    batch_summary <- calculate_rate_pressure_change(batch_summary, selected_sensor)
-    
-    max_acclim <- set_max_acclimation_pressure()
-    
-    # Calculate ratio pressure change and log ratio pressure change
-    batch_summary <- calculate_ratio_pressure_change(batch_summary, selected_sensor, max_acclim)
-    
-    # Calculate acceleration peaks
-    batch_summary <- find_acceleration_peaks(data, batch_summary, selected_sensor)
-    
-    # Draw plot for acceleration magnitude 
-    # First update sensor_summary and ensure accmag_ NA columns are dropped from other sensors
-    sensor_summary <- batch_summary %>%
-      filter(file == selected_sensor) %>%
-      select_if(~ any(!is.na(.)))
-    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 3)
-    print(plotly_plot)
-    
-    # Prompt user to continue with injection and tailwater selection
-    continue_injection <- readline(prompt = "Enter Y when ready to continue with injection and tailwater selection: ")
-    if (toupper(continue_injection) != "Y") {
-      cat("BDS analysis tool ended.\n")
-      return(invisible())
-    }
-    
-    # Draw plot for ROI selection
-    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 4)
-    print(plotly_plot)
-    
-    # Prompt user to enter injection and tailwater time
-    batch_summary <- prompt_for_injection_tailwater_times(data, batch_summary, selected_sensor, num_rows)
-    
-    # Assign passage points
-    data <- assign_passage_points(data, batch_summary, selected_sensor, sample_rate)
-    
-    # Draw plot with updated passage points
-    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 5)
-    print(plotly_plot)
-    
-    # Prompt user to continue with time series normalization
-    continue_normal <- readline(prompt = "Enter Y when ready to continue with passage time series normalization: ")
-    if (toupper(continue_normal) != "Y") {
-      cat("BDS analysis tool ended.\n")
-      return(invisible())
-    }
-    
-    # Perform time series normalization and update data
-    data <- time_normalization(data, selected_sensor)
-    
-    # Draw plot with normalized passage
-    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 6)
-    print(plotly_plot)
-    
-    # Update batch summary with processed status
-    batch_summary <- batch_summary %>%
-      mutate(pres_processed = ifelse(file == selected_sensor, "Y", pres_processed),
-             acc_processed = ifelse(file == selected_sensor, "Y", acc_processed))
-  }
-  
-  if (!result) {
-    batch_summary <- batch_summary %>%
-      mutate(badsens = ifelse(file == selected_sensor, "Y", badsens))
-  }
-  
-  # Update global environment
-  update_global_environment(data, batch_summary, sample_rate)
-  
-  # BDS analysis complete. Prompt user to continue or end
-  cat("BDS analysis complete for", selected_sensor, "\n")
-  continue <- readline(prompt = "Continue with BDS analysis? (Y/N): ")
-  if (toupper(continue) == "Y") {
-    BDSAnalysisTool(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, sample_rate)
-  } else {
-    cat("BDS Analysis tool ended\n")
-  }
-  # End of BDS analysis   
 }
