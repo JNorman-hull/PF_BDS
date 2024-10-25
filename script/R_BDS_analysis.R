@@ -31,11 +31,11 @@ rapid_hig_dir <- file.path(batch_meta_dir, "RAPID_HIG")
 # batch_summary <- batch_summary %>%
 #   slice(-2)
 
-#Filter and save specific sensor dataset
-# B68_0716164951_imp <- data_100_imp %>%
-#   filter(long_id == "B68-0716164951_imp" & !is.na(passage_point))
-# 
-# write.csv(B68_0716164951_imp, "B68-0716164951_imp .csv", row.names = FALSE)
+Filter and save specific sensor dataset
+C590909160221 <- data_250hz %>%
+  filter(long_id == "C590909160221" & !is.na(passage_point))
+
+write.csv(C590909160221, "C590909160221.csv", row.names = FALSE)
 
 #Filter by variable conditions
 # vertical bar (|) = OR  & = AND
@@ -146,7 +146,7 @@ save_data(batch_summary, data_100hz, data_250hz, data_100_imp, data_2000_hig)
 
 process_batch_files(batch_meta_dir, bds100_dir, bds250_dir, rapid_imp_dir, rapid_hig_dir)
 
-BDSAnalysisTool(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, "100_imp")
+BDSAnalysisTool(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, "250")
 
 
 write.csv(data_250hz, "./PROCESSED_data/processed_KATHA.csv", row.names = FALSE)

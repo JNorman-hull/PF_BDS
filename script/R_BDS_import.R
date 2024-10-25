@@ -456,28 +456,50 @@ create_combined_plot <- function(data, sensor_summary, selected_sensor, stage, n
   }
   
   if (stage == 4) {
-    # ROI 2
-    if ("max_accmag_roi2" %in% names(sensor_summary) && "max_accmag_time_roi2" %in% names(sensor_summary)) {
-      p <- p %>%
-        add_markers(
-          x = sensor_summary[["max_accmag_time_roi2"]],
-          y = sensor_summary[["max_accmag_roi2"]],
-          name = "Max Acc nadir region",
-          yaxis = 'y2',
-          marker = list(color = 'orange', size = 10, line = list(color = 'black', width = 1))
+    # Define colors for each ROI
+    roi_colors <- c(
+      "inj_to_pre_nadir" = "lightblue",
+      "pre_nadir_event" = "lightgreen",
+      "nadir_event" = "pink",
+      "post_nadir_event" = "lightgreen",
+      "post_nadir_to_rec" = "lightblue"
+    )
+    
+    # Add shaded regions for each ROI
+    for (roi_name in names(roi_colors)) {
+      roi_data <- data %>% filter(roi == roi_name)
+      if (nrow(roi_data) > 0) {
+        p <- p %>% add_ribbons(
+          data = roi_data,
+          x = ~time,
+          ymin = min(data$pres),
+          ymax = max(data$pres),
+          fillcolor = roi_colors[roi_name],
+          opacity = 0.3,
+          line = list(width = 0),
+          name = roi_name,
+          showlegend = TRUE
         )
+      }
     }
     
-    # ROI 3 and 4
-    for (roi in 3:4) {
-      max_accmag_col <- paste0("max_accmag_roi", roi)
-      event_time_col <- paste0("t_event_roi", roi)
-      if (max_accmag_col %in% names(sensor_summary) && event_time_col %in% names(sensor_summary)) {
+    p <- p %>%
+      add_lines(x = ~time, y = ~pres, name = 'Pressure', yaxis = 'y1', line = list(color = 'red', width = 1)) %>%
+      add_lines(x = ~time, y = ~accmag, name = 'Acceleration', yaxis = 'y2', line = list(color = 'blue', width = 1))
+    
+    #acceleration markers
+    accmag_cols <- names(sensor_summary)[grep("^accmag_\\d+$", names(sensor_summary))]
+    for (accmag_col in accmag_cols) {
+      i <- as.numeric(sub("accmag_", "", accmag_col))
+      time_col <- paste0(accmag_col, "_t")
+      
+      if (time_col %in% names(sensor_summary) &&
+          !is.na(sensor_summary[[accmag_col]]) && !is.na(sensor_summary[[time_col]])) {
         p <- p %>%
           add_markers(
-            x = sensor_summary[[event_time_col]],
-            y = sensor_summary[[max_accmag_col]],
-            name = paste0("Max Acc ROI ", roi),
+            x = sensor_summary[[time_col]],
+            y = sensor_summary[[accmag_col]],
+            name = paste0("Acc Peak ", i),
             yaxis = 'y2',
             marker = list(color = 'orange', size = 10, line = list(color = 'black', width = 1))
           )
@@ -758,6 +780,7 @@ calculate_ratio_pressure_change <- function(batch_summary, selected_sensor, max_
 }
 
 prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_sensor, num_rows) {
+  #ROI selection tool
   sensor_data <- data %>% filter(long_id == selected_sensor)
   t_nadir_val <- batch_summary %>% filter(file == selected_sensor) %>% pull(t_nadir)
   nadir_index <- which(sensor_data$time == t_nadir_val)
@@ -767,11 +790,7 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
   }
   
   # Create ROI columns if they don't exist
-  roi_columns <- c(
-    paste0("t_start_roi", 1:4),
-    paste0("t_end_roi", 1:4),
-    "t_event_roi3", "t_event_roi4"
-  )
+  roi_columns <- paste0(c("t_start_roi", "t_end_roi"), rep(1:6, each = 2))
   
   for (col in roi_columns) {
     if (!(col %in% colnames(batch_summary))) {
@@ -779,7 +798,7 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
     }
   }
   
-  for (roi in 1:4) {
+  for (roi in 1:6) {
     cat(paste("\nROI", roi, ":"))
     
     if (roi == 1) {
@@ -791,47 +810,97 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
       cat("Default start time (nadir - 3s):", t_start_val, "\n")
       cat("Default end time (nadir + 3s):", t_end_val, "\n")
       prompt <- "Use these default times for the main passage ROI? (Y/N): "
-    } else if (roi == 2) {
-      cat(" (Nadir event ROI)\n")
-      row_start <- max(1, nadir_index - 20)
-      row_end <- min(nrow(sensor_data), nadir_index + 20)
-      t_start_val <- sensor_data$time[row_start]
-      t_end_val <- sensor_data$time[row_end]
-      cat("Default nadir event start time (nadir - 0.2s):", t_start_val, "\n")
-      cat("Default nadir event end time (nadir + 0.2s):", t_end_val, "\n")
-      prompt <- "Use these default times for nadir event? (Y/N): "
-    } else {
-      event_label <- if(roi == 3) "pre-nadir" else "post-nadir"
-      cat("\nEnter event time series value for", event_label, "event\n")
-      event_time <- as.numeric(readline(prompt = "Enter event time value: "))
-      event_index <- which.min(abs(sensor_data$time - event_time))
-      row_start <- max(1, event_index - 10)
-      row_end <- min(nrow(sensor_data), event_index + 10)
-      t_start_val <- sensor_data$time[row_start]
-      t_end_val <- sensor_data$time[row_end]
-      cat("Default", event_label, "start time (event time - 0.1s):", t_start_val, "\n")
-      cat("Default", event_label, "end time (event time + 0.1s):", t_end_val, "\n")
-      prompt <- paste("Use these default times for", event_label, "event? (Y/N): ")
       
-      # Record event time in batch_summary
-      batch_summary <- batch_summary %>%
-        mutate(
-          !!paste0("t_event_roi", roi) := ifelse(file == selected_sensor, event_time, !!sym(paste0("t_event_roi", roi)))
-        )
-    }
-    
-    use_default <- readline(prompt = prompt)
-    
-    if (toupper(use_default) != "Y") {
-      cat(paste("Enter custom start and end times for ROI", roi, "\n"))
-      t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
-      t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
+      use_default <- readline(prompt = prompt)
       
-      while (is.na(t_start_val) || is.na(t_end_val) || t_start_val >= t_end_val) {
-        cat("Invalid input. Please ensure start time is less than end time and both are numeric.\n")
+      if (toupper(use_default) != "Y") {
+        cat(paste("Enter custom start and end times for ROI", roi, "\n"))
         t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
         t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
+        
+        while (is.na(t_start_val) || is.na(t_end_val) || t_start_val >= t_end_val) {
+          cat("Invalid input. Please ensure start time is less than end time and both are numeric.\n")
+          t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
+          t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
+        }
       }
+      
+    } else if (roi == 2) {
+      cat(" (Nadir event ROI)\n")
+      row_start <- max(1, nadir_index - 10)
+      row_end <- min(nrow(sensor_data), nadir_index + 10)
+      t_start_val <- sensor_data$time[row_start]
+      t_end_val <- sensor_data$time[row_end]
+      cat("Default nadir event start time (nadir - 0.1s):", t_start_val, "\n")
+      cat("Default nadir event end time (nadir + 0.1s):", t_end_val, "\n")
+      prompt <- "Use these default times for nadir event? (Y/N): "
+      
+      use_default <- readline(prompt = prompt)
+      
+      if (toupper(use_default) != "Y") {
+        cat(paste("Enter custom start and end times for ROI", roi, "\n"))
+        t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
+        t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
+        
+        while (is.na(t_start_val) || is.na(t_end_val) || t_start_val >= t_end_val) {
+          cat("Invalid input. Please ensure start time is less than end time and both are numeric.\n")
+          t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
+          t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
+        }
+      }
+      
+    } else if (roi == 3) {
+      cat(" (Pre-nadir ROI)\n")
+      t_start_val <- sensor_data$time[max(1, which(sensor_data$time == batch_summary$t_start_roi2[batch_summary$file == selected_sensor]) - num_rows)]
+      t_end_val <- sensor_data$time[which(sensor_data$time == batch_summary$t_start_roi2[batch_summary$file == selected_sensor])]
+      cat("Default start time (nadir ROI start - 1s):", t_start_val, "\n")
+      cat("End time:", t_end_val, "\n")
+      prompt <- "Use default start time for pre-nadir ROI? (Y/N): "
+      
+      use_default <- readline(prompt = prompt)
+      
+      if (toupper(use_default) != "Y") {
+        cat("Enter custom start time for pre-nadir ROI\n")
+        t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
+        
+        while (is.na(t_start_val) || t_start_val >= t_end_val) {
+          cat("Invalid input. Please ensure start time is less than end time and is numeric.\n")
+          t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
+        }
+      }
+      
+    } else if (roi == 4) {
+      cat(" (Post-nadir ROI)\n")
+      t_start_val <- sensor_data$time[which(sensor_data$time == batch_summary$t_end_roi2[batch_summary$file == selected_sensor])]
+      t_end_val <- sensor_data$time[min(nrow(sensor_data), which(sensor_data$time == batch_summary$t_end_roi2[batch_summary$file == selected_sensor]) + num_rows)]
+      cat("Start time:", t_start_val, "\n")
+      cat("Default end time (nadir ROI end + 1s):", t_end_val, "\n")
+      prompt <- "Use default end time for post-nadir ROI? (Y/N): "
+      
+      use_default <- readline(prompt = prompt)
+      
+      if (toupper(use_default) != "Y") {
+        cat("Enter custom end time for post-nadir ROI\n")
+        t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
+        
+        while (is.na(t_end_val) || t_end_val <= t_start_val) {
+          cat("Invalid input. Please ensure end time is greater than start time and is numeric.\n")
+          t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
+        }
+      }
+      
+    } else if (roi == 5) {
+      t_start_val <- batch_summary$t_start_roi1[batch_summary$file == selected_sensor]
+      t_end_val <- batch_summary$t_start_roi3[batch_summary$file == selected_sensor]
+      cat("ROI 5 automatically labelled (inj_to_pre_nadir)\n")
+      cat("Start time:", t_start_val, "\n")
+      cat("End time:", t_end_val, "\n")
+    } else if (roi == 6) {
+      t_start_val <- batch_summary$t_end_roi4[batch_summary$file == selected_sensor]
+      t_end_val <- batch_summary$t_end_roi1[batch_summary$file == selected_sensor]
+      cat("ROI 6 automatically labelled (post_nadir_to_rec)\n")
+      cat("Start time:", t_start_val, "\n")
+      cat("End time:", t_end_val, "\n")
     }
     
     batch_summary <- batch_summary %>%
@@ -847,61 +916,36 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
 }
 
 assign_passage_points <- function(data, batch_summary, selected_sensor, sample_rate) {
-  cat("Assigning passage points for sensor:", selected_sensor, "\n")
+  cat("\nAssigning passage points for sensor:", selected_sensor, "\n")
   
   # Filter the data for the selected sensor
   data_sensor <- data %>% filter(long_id == selected_sensor)
   
-  # ROI 1
-  t_start_val <- batch_summary %>% 
-    filter(file == selected_sensor) %>% 
-    pull(t_start_roi1)
-  t_nadir_val <- batch_summary %>% 
-    filter(file == selected_sensor) %>% 
-    pull(t_nadir)
-  t_end_val <- batch_summary %>% 
-    filter(file == selected_sensor) %>% 
-    pull(t_end_roi1)
+  # Get all ROI times
+  roi_times <- batch_summary %>%
+    filter(file == selected_sensor) %>%
+    select(starts_with("t_start_roi"), starts_with("t_end_roi"), t_nadir)
   
   data_sensor <- data_sensor %>%
-    mutate(passage_point = case_when(
-      time >= t_start_val & time < t_nadir_val ~ "pre_nadir",
-      time >= t_nadir_val & time <= t_end_val ~ "post_nadir",
-      TRUE ~ NA_character_
-    ))
-  
-  # ROI 2, 3, and 4
-  for (roi in 2:4) {
-    t_start_val <- batch_summary %>% 
-      filter(file == selected_sensor) %>% 
-      pull(!!paste0("t_start_roi", roi))
-    t_end_val <- batch_summary %>% 
-      filter(file == selected_sensor) %>% 
-      pull(!!paste0("t_end_roi", roi))
-    
-    data_sensor <- data_sensor %>%
-      mutate(!!paste0("roi", roi) := case_when(
-        time >= t_start_val & time <= t_end_val ~ 
-          case_when(
-            roi == 2 ~ "nadir_event",
-            roi == 3 ~ "pre_nadir_event",
-            roi == 4 ~ "post_nadir_event",
-            TRUE ~ NA_character_
-          ),
+    mutate(
+      passage_point = case_when(
+        time >= roi_times$t_start_roi1 & time < roi_times$t_nadir ~ "pre_nadir",
+        time >= roi_times$t_nadir & time <= roi_times$t_end_roi1 ~ "post_nadir",
         TRUE ~ NA_character_
-      ))
-  }
+      ),
+      roi = case_when(
+        time >= roi_times$t_start_roi5 & time < roi_times$t_end_roi5 ~ "inj_to_pre_nadir",
+        time >= roi_times$t_start_roi3 & time < roi_times$t_end_roi3 ~ "pre_nadir_event",
+        time >= roi_times$t_start_roi2 & time < roi_times$t_end_roi2 ~ "nadir_event",
+        time >= roi_times$t_start_roi4 & time < roi_times$t_end_roi4 ~ "post_nadir_event",
+        time >= roi_times$t_start_roi6 & time <= roi_times$t_end_roi6 ~ "post_nadir_to_rec",
+        TRUE ~ NA_character_
+      )
+    )
   
-  cat("Passage points assigned to", selected_sensor, "for all ROIs\n")
+  cat("Passage points and ROIs assigned to", selected_sensor, "\n")
   
   # Update the data for the selected sensor
-  new_columns <- setdiff(names(data_sensor), names(data))
-  if (length(new_columns) > 0) {
-    for (col in new_columns) {
-      data[[col]] <- NA
-    }
-  }
-  
   rows_to_update <- which(data$long_id == selected_sensor)
   data[rows_to_update, names(data_sensor)] <- data_sensor
   
@@ -910,13 +954,14 @@ assign_passage_points <- function(data, batch_summary, selected_sensor, sample_r
 
 
 max_acceleration_extract <- function(data, batch_summary, selected_sensor) {
+  # extract the max acceleration value in each ROI
   # Filter data for the selected sensor
   sensor_data <- data %>% filter(long_id == selected_sensor)
   
   # Create columns if they don't exist
   new_columns <- c(
-    paste0("max_accmag_roi", 1:4),
-    paste0("max_accmag_time_roi", 1:4)
+    paste0("max_accmag_roi", 1:6),
+    paste0("max_accmag_time_roi", 1:6)
   )
   for (col in new_columns) {
     if (!(col %in% colnames(batch_summary))) {
@@ -924,8 +969,8 @@ max_acceleration_extract <- function(data, batch_summary, selected_sensor) {
     }
   }
   
-  # Extract max acceleration for ROI 1 and 2
-  for (roi in 1:2) {
+  # Extract max acceleration
+  for (roi in 1:6) {
     t_start <- batch_summary %>% 
       filter(file == selected_sensor) %>% 
       pull(!!paste0("t_start_roi", roi))
@@ -947,40 +992,213 @@ max_acceleration_extract <- function(data, batch_summary, selected_sensor) {
       )
   }
   
-  # Extract accmag values for ROI 3 and 4
-  for (roi in 3:4) {
-    t_event <- batch_summary %>% 
-      filter(file == selected_sensor) %>% 
-      pull(!!paste0("t_event_roi", roi))
-    
-    event_index <- which.min(abs(sensor_data$time - t_event))
-    event_accmag <- sensor_data$accmag[event_index]
-    
-    # Update batch_summary
-    batch_summary <- batch_summary %>%
-      mutate(
-        !!paste0("max_accmag_roi", roi) := ifelse(file == selected_sensor, event_accmag, !!sym(paste0("max_accmag_roi", roi))),
-        !!paste0("max_accmag_time_roi", roi) := ifelse(file == selected_sensor, t_event, !!sym(paste0("max_accmag_time_roi", roi)))
-      )
-  }
-  
-  # Print results to console
+# Print results to console
   cat("\nMaximum acceleration values:\n")
   cat("ROI 1 (Main overall sensor passage) max acceleration:", batch_summary$max_accmag_roi1[batch_summary$file == selected_sensor], "\n")
   cat("ROI 2 (nadir event) max acceleration:", batch_summary$max_accmag_roi2[batch_summary$file == selected_sensor], "\n")
-  cat("ROI 3 (pre-nadir event) acceleration:", batch_summary$max_accmag_roi3[batch_summary$file == selected_sensor], "\n")
-  cat("ROI 4 (post-nadir event) acceleration:", batch_summary$max_accmag_roi4[batch_summary$file == selected_sensor], "\n")
-  
-  # Remove max_accmag_time_roi columns for ROI 1, 3, and 4, but keep ROI 2
-  batch_summary <- batch_summary %>%
-    select(-matches("max_accmag_time_roi[134]"))
+  cat("ROI 3 (pre-nadir ROI) acceleration:", batch_summary$max_accmag_roi3[batch_summary$file == selected_sensor], "\n")
+  cat("ROI 4 (post-nadir ROI) acceleration:", batch_summary$max_accmag_roi4[batch_summary$file == selected_sensor], "\n")
+  cat("ROI 5 (inection to pre-nadir ROI) acceleration:", batch_summary$max_accmag_roi5[batch_summary$file == selected_sensor], "\n")
+  cat("ROI 6 (post-nadir to recovery ROI) acceleration:", batch_summary$max_accmag_roi6[batch_summary$file == selected_sensor], "\n")
   
   return(batch_summary)
 }
 
+nadir_acceleration_distance <- function(data, batch_summary, selected_sensor) {
+  # Extract relevant values from batch_summary
+  sensor_summary <- batch_summary[batch_summary$file == selected_sensor, ]
+  t_nadir <- sensor_summary$t_nadir
+  max_accmag_time_roi2 <- sensor_summary$max_accmag_time_roi2
+  
+  # Find the row indices for nadir and max acceleration
+  nadir_index <- which.min(abs(data$time - t_nadir))
+  max_acc_index <- which.min(abs(data$time - max_accmag_time_roi2))
+  
+  # Calculate the row difference
+  row_diff <- max_acc_index - nadir_index
+  
+  # Calculate the time difference using fixed time step
+  fixed_time_step <- 0.01  # 0.01 seconds per row
+  max_nadir_acc_dist <- abs(row_diff) * fixed_time_step
+  
+  # Determine the position relative to nadir
+  if (row_diff < 0) {
+    max_nadir_acc_position <- "before_nadir"
+  } else if (row_diff > 0) {
+    max_nadir_acc_position <- "after_nadir"
+  } else {
+    max_nadir_acc_position <- "on_nadir"
+  }
+  
+  # Update batch_summary with new values
+  batch_summary <- batch_summary %>%
+    mutate(
+      max_nadir_acc_dist = ifelse(file == selected_sensor, max_nadir_acc_dist, max_nadir_acc_dist),
+      max_nadir_acc_position = ifelse(file == selected_sensor, max_nadir_acc_position, max_nadir_acc_position)
+    )
+  
+  # Print message to console
+  cat("\nAcceleration time relative to nadir (nadir ROI only):")
+  cat(sprintf("\nMaximum acceleration in nadir ROI occurred %.3f seconds (%d rows) %s.\n", 
+              max_nadir_acc_dist, abs(row_diff), max_nadir_acc_position))
+  
+  return(batch_summary)
+}
+
+find_acceleration_peaks <- function(data, batch_summary, selected_sensor, 
+                                    peak = 49.03, peak_gap = 5, drop = 5, drop_gap = 1,
+                                    group_window_multiplier = 3) {
+  # Filter data within t_start_roi1 to t_end_roi1 (overall passage)
+  roi_start <- batch_summary$t_start_roi1[batch_summary$file == selected_sensor]
+  roi_end <- batch_summary$t_end_roi1[batch_summary$file == selected_sensor]
+  data <- filter(data, long_id == selected_sensor, time >= roi_start, time <= roi_end)
+  
+  cat("\nDebug: Processing sensor:", selected_sensor, "\n")
+  cat("Debug: ROI start:", roi_start, "ROI end:", roi_end, "\n")
+  
+  # Find initial peaks
+  peaks <- findpeaks(data$accmag, minpeakheight = peak, minpeakdistance = peak_gap)
+  
+  if (is.null(peaks) || nrow(peaks) == 0) {
+    cat("No acceleration peaks meeting the criteria were found\n")
+    return(batch_summary)
+  }
+  
+  peak_indices <- peaks[, 2]
+  peak_values <- data$accmag[peak_indices]
+  peak_times <- data$time[peak_indices]
+  
+  cat("\nDebug: Initial peaks found:", length(peak_indices), "\n")
+  cat("Debug: Peak times:", paste(peak_times, collapse = ", "), "\n")
+  cat("Debug: Peak values:", paste(peak_values, collapse = ", "), "\n")
+  
+  # Sort peaks by time
+  sorted_order <- order(peak_times)
+  peak_indices <- peak_indices[sorted_order]
+  peak_values <- peak_values[sorted_order]
+  peak_times <- peak_times[sorted_order]
+  
+  cat("\nDebug: Sorted peak times:", paste(peak_times, collapse = ", "), "\n")
+  cat("Debug: Sorted peak values:", paste(peak_values, collapse = ", "), "\n")
+  
+  if (length(peak_indices) > 1) {
+    group_window <- peak_gap * group_window_multiplier
+    cat("\nDebug: New calculated group window:", group_window, "\n")
+    
+    groups <- cumsum(c(1, diff(peak_indices) > group_window))
+    cat("Debug: Group assignments:", paste(groups, collapse = ", "), "\n")
+    
+    valid_peaks <- numeric()
+    
+    for (g in unique(groups)) {
+      group_indices <- peak_indices[groups == g]
+      group_values <- peak_values[groups == g]
+      
+      cat("\nDebug: Processing group", g, "\n")
+      cat("Debug: Group indices:", paste(group_indices, collapse = ", "), "\n")
+      cat("Debug: Group values:", paste(group_values, collapse = ", "), "\n")
+      
+      if (length(group_indices) == 1) {
+        valid_peaks <- c(valid_peaks, group_indices)
+        cat("Debug: Single peak in group, keeping it\n")
+      } else {
+        drops <- sapply(1:(length(group_indices)-1), function(i) {
+          between_peaks <- data$accmag[(group_indices[i]+1):(group_indices[i+1]-1)]
+          drop_runs <- rle(between_peaks <= drop)
+          any(drop_runs$lengths[drop_runs$values] >= drop_gap)
+        })
+        
+        cat("Debug: Drops detected:", paste(drops, collapse = ", "), "\n")
+        
+        if (any(drops)) {
+          peaks_to_keep <- c(TRUE, drops)
+          new_valid_peaks <- group_indices[peaks_to_keep]
+          valid_peaks <- c(valid_peaks, new_valid_peaks)
+          cat("Debug: Keeping multiple peaks due to drops:", paste(new_valid_peaks, collapse = ", "), "\n")
+        } else {
+          highest_peak <- group_indices[which.max(group_values)]
+          valid_peaks <- c(valid_peaks, highest_peak)
+          cat("Debug: No drops, keeping only the highest peak:", highest_peak, "\n")
+        }
+      }
+      
+      # Check distance to nearest peak outside the group
+      if (g < max(groups)) {
+        next_group_start <- min(peak_indices[groups > g])
+        distance_to_next <- next_group_start - max(group_indices)
+        cat("\nDebug: Distance to next group:", distance_to_next, "\n")
+      }
+      if (g > 1) {
+        prev_group_end <- max(peak_indices[groups < g])
+        distance_to_prev <- min(group_indices) - prev_group_end
+        cat("\nDebug: Distance to previous group:", distance_to_prev, "\n")
+      }
+    }
+  } else {
+    valid_peaks <- peak_indices
+    cat("\nDebug: Only one peak found, keeping it\n")
+  }
+  
+  # Update batch_summary with peak values
+  peak_values <- data$accmag[valid_peaks]
+  peak_times <- data$time[valid_peaks]
+  peak_pres <- data$pres[valid_peaks]
+  
+  cat("\nDebug: Final valid peaks:", paste(valid_peaks, collapse = ", "), "\n")
+  cat("Debug: Final peak times:", paste(peak_times, collapse = ", "), "\n")
+  cat("Debug: Final peak values:", paste(peak_values, collapse = ", "), "\n")
+  
+  for (i in seq_along(peak_values)) {
+    accmag_col <- paste0("accmag_", i)
+    time_col <- paste0("accmag_", i, "_t")
+    pres_col <- paste0("accmag_", i, "_p")
+    
+    if (!(accmag_col %in% colnames(batch_summary))) {
+      batch_summary[[accmag_col]] <- NA_real_
+    }
+    if (!(time_col %in% colnames(batch_summary))) {
+      batch_summary[[time_col]] <- NA_real_
+    }
+    if (!(pres_col %in% colnames(batch_summary))) {
+      batch_summary[[pres_col]] <- NA_real_
+    }
+    
+    batch_summary <- batch_summary %>%
+      mutate(
+        !!accmag_col := ifelse(file == selected_sensor, peak_values[i], .data[[accmag_col]]),
+        !!time_col := ifelse(file == selected_sensor, peak_times[i], .data[[time_col]]),
+        !!pres_col := ifelse(file == selected_sensor, peak_pres[i], .data[[pres_col]])
+      )
+  }
+  
+  # Count peaks in each ROI
+  roi_categories <- unique(data$roi)
+  for (category in roi_categories) {
+    count_col <- paste0(category, "_accmag_count")
+    if (!(count_col %in% colnames(batch_summary))) {
+      batch_summary[[count_col]] <- 0
+    }
+    
+    category_peaks <- sum(data$roi[valid_peaks] == category)
+    
+    batch_summary <- batch_summary %>%
+      mutate(!!count_col := ifelse(file == selected_sensor, category_peaks, .data[[count_col]]))
+    
+    cat("\nCategory:", category, "\n")
+    cat("Number of peaks:", category_peaks, "\n")
+    if (category_peaks > 0) {
+      cat("Peak times:", paste(peak_times[data$roi[valid_peaks] == category], collapse = ", "), "\n")
+      cat("Peak values:", paste(peak_values[data$roi[valid_peaks] == category], collapse = ", "), "\n")
+    }
+  }
+  
+  cat("\nTotal number of peaks:", length(valid_peaks), "\n")
+  
+  return(batch_summary)
+}
 
 time_normalization <- function(data, selected_sensor) {
-  
+  # normalize time series for overall passage (ROI 1) by 0 - 1 with nadir at 0.5
   # Ensure time_norm column exists and is initialized as 0
   if (!"time_norm" %in% colnames(data)) {
     data$time_norm <- 0
@@ -1117,8 +1335,14 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
     # Assign passage points
     data <- assign_passage_points(data, batch_summary, selected_sensor, sample_rate)
     
-    #Find max acceleration values within each ROI. ROI 1 and 2 use a range, RO1 3 and 4 use event time
+    #Find max acceleration values within each ROI
     batch_summary <- max_acceleration_extract(data, batch_summary, selected_sensor)
+    
+    #determine if max acceleration in nadir roi occured before, on or after nadir, and time difference
+    batch_summary <- nadir_acceleration_distance(data, batch_summary, selected_sensor)
+    
+    #Find acceleration peaks with given criteria
+    batch_summary <- find_acceleration_peaks(data, batch_summary, selected_sensor)
     
     #Update sensor_summary and ensure NA columns are dropped from other sensors. 
     #May be redundant, but plot fucntion relises on it at the moment
@@ -1174,53 +1398,6 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
 
 
 ##4.1 Misc####
-
-# find_acceleration_peaks <- function(data, batch_summary, selected_sensor, threshold = 49.03, min_gap = 12) {
-#   # Set threshold to desired magnitude and set min_gap to time series (0.1s = 12)
-#   data <- filter(data, long_id == selected_sensor)
-#   peaks <- findpeaks(data$accmag, minpeakheight = threshold, minpeakdistance = min_gap)
-#   
-#   if (is.null(peaks)) {
-#     cat("No acceleration peaks >= 49.03 m/s2 found\n")
-#     return(batch_summary)
-#   }
-#   
-#   peak_indices <- peaks[, 2]
-#   peak_values <- data$accmag[peak_indices]
-#   peak_times <- data$time[peak_indices]
-#   peak_pres <- data$pres[peak_indices]
-#   num_peaks <- length(peak_values)
-#   
-#   # Update batch_summary with peak values dynamically
-#   for (i in seq_along(peak_values)) {
-#     accmag_col <- paste0("accmag_", i)
-#     time_col <- paste0("accmag_", i, "_t")
-#     pres_col <- paste0("accmag_", i, "_p")
-#     
-#     if (!(accmag_col %in% colnames(batch_summary))) {
-#       batch_summary[[accmag_col]] <- NA_real_
-#     }
-#     if (!(time_col %in% colnames(batch_summary))) {
-#       batch_summary[[time_col]] <- NA_real_
-#     }
-#     if (!(pres_col %in% colnames(batch_summary))) {
-#       batch_summary[[pres_col]] <- NA_real_
-#     }
-#     
-#     batch_summary <- batch_summary %>%
-#       mutate(
-#         !!accmag_col := ifelse(file == selected_sensor, peak_values[i], .data[[accmag_col]]),
-#         !!time_col := ifelse(file == selected_sensor, peak_times[i], .data[[time_col]]),
-#         !!pres_col := ifelse(file == selected_sensor, peak_pres[i], .data[[pres_col]])
-#       )
-#   }
-#   
-#   cat(num_peaks, "acceleration peaks >= 49.03 m/s2 identified and recorded in batch summary\n")
-#   
-#   return(batch_summary)
-# }
-
-
 
 add_treatment <- function(data, data_name) {
   # Define the possible entries
