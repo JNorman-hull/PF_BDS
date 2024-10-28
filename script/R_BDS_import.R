@@ -356,6 +356,38 @@ process_batch_files <- function(batch_meta_dir, bds100_dir, bds250_dir, rapid_im
   cat("Batch file processing completed.\n")
 }
 
+add_video_metrics <- function(batch_meta_dir) {
+  # Load video metrics CSV
+  video_metrics_path <- file.path(batch_meta_dir, "video_metrics.csv")
+  if (!file.exists(video_metrics_path)) {
+    stop("video_metrics.csv not found in batch_meta_dir")
+  }
+  
+  # Define the columns to extract
+  cols_to_extract <- c(
+    "treatment", "inj_pos", "frame_in", "frame_out", 
+    "sens_rows", "sens_wc_pos_ent", "sens_wc_pos_blade", "sens_ec_orien", 
+    "sens_velocity", "pre_swirl", "sens_wc_pos_exit", "clear_passage", 
+    "passage_loc", "pl_frame", "centre_hub_contact", "blade_contact", 
+    "n_contact", "c_1_bl", "c_1_sl", "c_1_bv", "c_1_f", "c_2_bl", 
+    "c_2_sl", "c_2_bv", "c_2_f", "c_3_bl", "c_3_sl", "c_3_bv", "c_3_f"
+  )
+  
+  # Read video metrics and select columns
+  video_metrics <- read_csv(video_metrics_path, show_col_types = FALSE) %>%
+    select(sens_file, all_of(cols_to_extract))
+  
+  # Update batch_summary in global environment
+  batch_summary <<- batch_summary %>%
+    mutate(join_key = gsub("_imp$", "", file)) %>%  # Remove _imp for joining
+    left_join(
+      video_metrics,
+      by = c("join_key" = "sens_file")
+    ) %>%
+    select(-join_key)  # Remove temporary join key
+  
+  cat("Video metrics added to batch_summary\n")
+}
 
 filter_batch_summary <- function(batch_summary, sample_rate) {
   if (sample_rate == 250) {
@@ -391,21 +423,70 @@ filter_batch_summary <- function(batch_summary, sample_rate) {
 }
 
 prompt_user_to_select_sensor <- function(sensors) {
-  sensor_choices <- sensors$file
+  sensor_labels <- sensors %>%
+    left_join(batch_summary %>% select(file, treatment, clear_passage, blade_contact, centre_hub_contact), 
+              by = c("file")) %>%
+    mutate(display_name = paste0(
+      file,
+      " Treatment = ", coalesce(treatment, "Unknown"),
+      case_when(
+        clear_passage == "Y" ~ " Clear sensor passage",
+        TRUE ~ paste0(
+          case_when(
+            blade_contact == "Y" ~ " Blade strike",
+            blade_contact == "N" ~ " No blade strike",
+            TRUE ~ ""
+          ),
+          case_when(
+            centre_hub_contact == "Y" ~ " Centre hub contact",
+            centre_hub_contact == "N" ~ " No centre hub contact",
+            TRUE ~ ""
+          )
+        )
+      )
+    ))
+  
+  # Rest of the function remains the same
   cat("Select a sensor dataset to begin BDS analysis:\n")
-  for (i in seq_along(sensor_choices)) {
-    cat(i, ": ", sensor_choices[i], "\n", sep = "")
+  for (i in seq_along(sensor_labels$display_name)) {
+    cat(i, ": ", sensor_labels$display_name[i], "\n", sep = "")
   }
+  
   selected_sensor_index <- as.integer(readline(prompt = "Enter the number corresponding to the sensor: "))
-  if (is.na(selected_sensor_index) || selected_sensor_index < 1 || selected_sensor_index > length(sensor_choices)) {
+  if (is.na(selected_sensor_index) || selected_sensor_index < 1 || selected_sensor_index > nrow(sensor_labels)) {
     stop("Invalid sensor selection")
   }
-  sensor_choices[selected_sensor_index]
+  
+  sensor_labels$file[selected_sensor_index]
 }
 
 create_combined_plot <- function(data, sensor_summary, selected_sensor, stage, num_rows) {
   # Filter data for the selected sensor
   data <- filter(data, long_id == selected_sensor)
+  
+  # Get sensor information for title
+  sensor_title <- batch_summary %>%
+    filter(file == selected_sensor) %>%
+    mutate(display_title = paste0(
+      file,
+      " Treatment = ", coalesce(treatment, "Unknown"),
+      case_when(
+        clear_passage == "Y" ~ " Clear sensor passage",
+        TRUE ~ paste0(
+          case_when(
+            blade_contact == "Y" ~ " Blade strike",
+            blade_contact == "N" ~ " No blade strike",
+            TRUE ~ ""
+          ),
+          case_when(
+            centre_hub_contact == "Y" ~ " Centre hub contact",
+            centre_hub_contact == "N" ~ " No centre hub contact",
+            TRUE ~ ""
+          )
+        )
+      )
+    )) %>%
+    pull(display_title)
   
   if (stage == 2) {
     nadir_time <- sensor_summary$t_nadir
@@ -419,8 +500,17 @@ create_combined_plot <- function(data, sensor_summary, selected_sensor, stage, n
     data <- filter(data, !is.na(passage_point))
   }
   
-  # Base plot
-  p <- plot_ly(data)
+  # Base plot with title
+  p <- plot_ly(data) %>%
+    layout(
+      title = list(
+        text = sensor_title,
+        x = 0.5,
+        xanchor = 'center',
+        yanchor = 'top',
+        y = 0.95
+      )
+    )
   
   # Always add pressure line
   p <- p %>%
@@ -692,36 +782,36 @@ calculate_max_pressure_before_nadir <- function(data, batch_summary, selected_se
   batch_summary
 }
 
-process_max_p_1s_nadir <- function(batch_summary, selected_sensor) {
-  # Retrieve the current max_p_1s_nadir and t_max_p_1s_nadir values
-  sensor_summary <- batch_summary %>% filter(file == selected_sensor)
-  current_max_p_1s_nadir <- sensor_summary$max_p_1s_nadir
-  current_t_max_p_1s_nadir <- sensor_summary$t_max_p_1s_nadir
-  
-  # Display current values and prompt user for validation
-  cat("Current max pressure within 1s prior to nadir value:", current_max_p_1s_nadir, "\n")
-  cat("Current time of max pressure within 1s prior to nadir:", current_t_max_p_1s_nadir, "\n")
-  is_correct <- readline(prompt = "Is max pressure within 1s prior to nadir value correct? (Y/N): ")
-  
-  if (toupper(is_correct) == "N") {
-    new_max_p_1s_nadir <- as.numeric(readline(prompt = "Enter new max pressure within 1s prior to nadir value: "))
-    new_t_max_p_1s_nadir <- as.numeric(readline(prompt = "Enter new time of max pressure within 1s prior to nadir: "))
-    
-    # Update batch_summary with new values
-    batch_summary <- batch_summary %>%
-      mutate(
-        max_p_1s_nadir = ifelse(file == selected_sensor, new_max_p_1s_nadir, max_p_1s_nadir),
-        t_max_p_1s_nadir = ifelse(file == selected_sensor, new_t_max_p_1s_nadir, t_max_p_1s_nadir)
-      )
-    cat("New max pressure within 1s prior to nadir and time recorded in batch summary\n")
-  } else if (toupper(is_correct) == "Y") {
-    cat("Max pressure within 1s prior to nadir value and time remain unchanged\n")
-  } else {
-    cat("Invalid input. Please enter 'Y' or 'N'.\n")
-  }
-  
-  return(batch_summary)
-}
+# process_max_p_1s_nadir <- function(batch_summary, selected_sensor) {
+#   # Retrieve the current max_p_1s_nadir and t_max_p_1s_nadir values
+#   sensor_summary <- batch_summary %>% filter(file == selected_sensor)
+#   current_max_p_1s_nadir <- sensor_summary$max_p_1s_nadir
+#   current_t_max_p_1s_nadir <- sensor_summary$t_max_p_1s_nadir
+#   
+#   # Display current values and prompt user for validation
+#   cat("Current max pressure within 1s prior to nadir value:", current_max_p_1s_nadir, "\n")
+#   cat("Current time of max pressure within 1s prior to nadir:", current_t_max_p_1s_nadir, "\n")
+#   is_correct <- readline(prompt = "Is max pressure within 1s prior to nadir value correct? (Y/N): ")
+#   
+#   if (toupper(is_correct) == "N") {
+#     new_max_p_1s_nadir <- as.numeric(readline(prompt = "Enter new max pressure within 1s prior to nadir value: "))
+#     new_t_max_p_1s_nadir <- as.numeric(readline(prompt = "Enter new time of max pressure within 1s prior to nadir: "))
+#     
+#     # Update batch_summary with new values
+#     batch_summary <- batch_summary %>%
+#       mutate(
+#         max_p_1s_nadir = ifelse(file == selected_sensor, new_max_p_1s_nadir, max_p_1s_nadir),
+#         t_max_p_1s_nadir = ifelse(file == selected_sensor, new_t_max_p_1s_nadir, t_max_p_1s_nadir)
+#       )
+#     cat("New max pressure within 1s prior to nadir and time recorded in batch summary\n")
+#   } else if (toupper(is_correct) == "Y") {
+#     cat("Max pressure within 1s prior to nadir value and time remain unchanged\n")
+#   } else {
+#     cat("Invalid input. Please enter 'Y' or 'N'.\n")
+#   }
+#   
+#   return(batch_summary)
+# }
 
 calculate_rate_pressure_change <- function(batch_summary, selected_sensor) {
   rate_pc_value <- batch_summary %>% filter(file == selected_sensor) %>% 
@@ -1054,7 +1144,7 @@ find_acceleration_peaks <- function(data, batch_summary, selected_sensor,
   data <- filter(data, long_id == selected_sensor, time >= roi_start, time <= roi_end)
   
   cat("\nDebug: Processing sensor:", selected_sensor, "\n")
-  cat("Debug: ROI start:", roi_start, "ROI end:", roi_end, "\n")
+  cat("Debug: ROI start:", roi_start, "ROI end:", roi_end, "\n\n")
   
   # Find initial peaks
   peaks <- findpeaks(data$accmag, minpeakheight = peak, minpeakdistance = peak_gap)
@@ -1068,9 +1158,9 @@ find_acceleration_peaks <- function(data, batch_summary, selected_sensor,
   peak_values <- data$accmag[peak_indices]
   peak_times <- data$time[peak_indices]
   
-  cat("\nDebug: Initial peaks found:", length(peak_indices), "\n")
+  cat("Debug: Initial peaks found:", length(peak_indices), "\n")
   cat("Debug: Peak times:", paste(peak_times, collapse = ", "), "\n")
-  cat("Debug: Peak values:", paste(peak_values, collapse = ", "), "\n")
+  cat("Debug: Peak values:", paste(peak_values, collapse = ", "), "\n\n")
   
   # Sort peaks by time
   sorted_order <- order(peak_times)
@@ -1078,60 +1168,75 @@ find_acceleration_peaks <- function(data, batch_summary, selected_sensor,
   peak_values <- peak_values[sorted_order]
   peak_times <- peak_times[sorted_order]
   
-  cat("\nDebug: Sorted peak times:", paste(peak_times, collapse = ", "), "\n")
-  cat("Debug: Sorted peak values:", paste(peak_values, collapse = ", "), "\n")
+  cat("Debug: Sorted peak times:", paste(peak_times, collapse = ", "), "\n")
+  cat("Debug: Sorted peak values:", paste(peak_values, collapse = ", "), "\n\n")
+  
+  valid_peaks <- numeric()
   
   if (length(peak_indices) > 1) {
     group_window <- peak_gap * group_window_multiplier
-    cat("\nDebug: New calculated group window:", group_window, "\n")
+    cat("Debug: New calculated group window:", group_window, "\n")
     
     groups <- cumsum(c(1, diff(peak_indices) > group_window))
-    cat("Debug: Group assignments:", paste(groups, collapse = ", "), "\n")
-    
-    valid_peaks <- numeric()
+    cat("Debug: Group assignments:", paste(groups, collapse = ", "), "\n\n")
     
     for (g in unique(groups)) {
       group_indices <- peak_indices[groups == g]
       group_values <- peak_values[groups == g]
+      group_times <- peak_times[groups == g]
       
       cat("\nDebug: Processing group", g, "\n")
       cat("Debug: Group indices:", paste(group_indices, collapse = ", "), "\n")
       cat("Debug: Group values:", paste(group_values, collapse = ", "), "\n")
+      cat("Debug: Group times:", paste(group_times, collapse = ", "), "\n")
       
       if (length(group_indices) == 1) {
         valid_peaks <- c(valid_peaks, group_indices)
-        cat("Debug: Single peak in group, keeping it\n")
+        cat("Debug: Single peak in group, keeping it:", group_values, "\n")
       } else {
+        # Check for drops between consecutive peaks
         drops <- sapply(1:(length(group_indices)-1), function(i) {
           between_peaks <- data$accmag[(group_indices[i]+1):(group_indices[i+1]-1)]
           drop_runs <- rle(between_peaks <= drop)
           any(drop_runs$lengths[drop_runs$values] >= drop_gap)
         })
         
-        cat("Debug: Drops detected:", paste(drops, collapse = ", "), "\n")
+        cat("Debug: Drops detected at positions:", paste(which(drops), collapse = ", "), "\n")
+        cat("Debug: Drop values:", paste(drops, collapse = ", "), "\n")
         
         if (any(drops)) {
-          peaks_to_keep <- c(TRUE, drops)
-          new_valid_peaks <- group_indices[peaks_to_keep]
-          valid_peaks <- c(valid_peaks, new_valid_peaks)
-          cat("Debug: Keeping multiple peaks due to drops:", paste(new_valid_peaks, collapse = ", "), "\n")
+          # First peak is always kept
+          valid_peaks_in_group <- c(group_indices[1])
+          cat("\nDebug: Keeping first peak:", group_values[1], "at time", group_times[1], "\n")
+          
+          # For each drop, find the highest peak between this drop and the next
+          drop_points <- which(drops)
+          for (i in seq_along(drop_points)) {
+            start_idx <- drop_points[i] + 1
+            end_idx <- if (i == length(drop_points)) length(group_indices) else drop_points[i + 1]
+            
+            cat("\nDebug: Processing drop point", i, "\n")
+            cat("Debug: Looking at peaks from index", start_idx, "to", end_idx, "\n")
+            cat("Debug: Values in range:", paste(group_values[start_idx:end_idx], collapse = ", "), "\n")
+            
+            peak_values_in_range <- group_values[start_idx:end_idx]
+            max_idx_in_range <- which.max(peak_values_in_range) + start_idx - 1
+            valid_peaks_in_group <- c(valid_peaks_in_group, group_indices[max_idx_in_range])
+            
+            cat("Debug: Selected highest peak in range:", group_values[max_idx_in_range], 
+                "at time", group_times[max_idx_in_range], "\n")
+          }
+          
+          valid_peaks <- c(valid_peaks, valid_peaks_in_group)
+          cat("\nDebug: Final peaks kept in group after drops:", 
+              paste(data$accmag[valid_peaks_in_group], collapse = ", "), "\n")
+          cat("Debug: At times:", paste(data$time[valid_peaks_in_group], collapse = ", "), "\n")
         } else {
           highest_peak <- group_indices[which.max(group_values)]
           valid_peaks <- c(valid_peaks, highest_peak)
-          cat("Debug: No drops, keeping only the highest peak:", highest_peak, "\n")
+          cat("Debug: No drops, keeping only the highest peak:", 
+              data$accmag[highest_peak], "at time", data$time[highest_peak], "\n")
         }
-      }
-      
-      # Check distance to nearest peak outside the group
-      if (g < max(groups)) {
-        next_group_start <- min(peak_indices[groups > g])
-        distance_to_next <- next_group_start - max(group_indices)
-        cat("\nDebug: Distance to next group:", distance_to_next, "\n")
-      }
-      if (g > 1) {
-        prev_group_end <- max(peak_indices[groups < g])
-        distance_to_prev <- min(group_indices) - prev_group_end
-        cat("\nDebug: Distance to previous group:", distance_to_prev, "\n")
       }
     }
   } else {
@@ -1144,9 +1249,10 @@ find_acceleration_peaks <- function(data, batch_summary, selected_sensor,
   peak_times <- data$time[valid_peaks]
   peak_pres <- data$pres[valid_peaks]
   
-  cat("\nDebug: Final valid peaks:", paste(valid_peaks, collapse = ", "), "\n")
-  cat("Debug: Final peak times:", paste(peak_times, collapse = ", "), "\n")
+  cat("\nDebug: Final Results:\n")
+  cat("Debug: Total peaks kept:", length(valid_peaks), "\n")
   cat("Debug: Final peak values:", paste(peak_values, collapse = ", "), "\n")
+  cat("Debug: Final peak times:", paste(peak_times, collapse = ", "), "\n")
   
   for (i in seq_along(peak_values)) {
     accmag_col <- paste0("accmag_", i)
@@ -1174,25 +1280,25 @@ find_acceleration_peaks <- function(data, batch_summary, selected_sensor,
   # Count peaks in each ROI
   roi_categories <- unique(data$roi)
   for (category in roi_categories) {
-    count_col <- paste0(category, "_accmag_count")
-    if (!(count_col %in% colnames(batch_summary))) {
-      batch_summary[[count_col]] <- 0
-    }
-    
-    category_peaks <- sum(data$roi[valid_peaks] == category)
-    
-    batch_summary <- batch_summary %>%
-      mutate(!!count_col := ifelse(file == selected_sensor, category_peaks, .data[[count_col]]))
-    
-    cat("\nCategory:", category, "\n")
-    cat("Number of peaks:", category_peaks, "\n")
-    if (category_peaks > 0) {
-      cat("Peak times:", paste(peak_times[data$roi[valid_peaks] == category], collapse = ", "), "\n")
-      cat("Peak values:", paste(peak_values[data$roi[valid_peaks] == category], collapse = ", "), "\n")
+    if (!is.na(category)) {  # Skip NA categories
+      count_col <- paste0(category, "_accmag_count")
+      if (!(count_col %in% colnames(batch_summary))) {
+        batch_summary[[count_col]] <- 0
+      }
+      
+      category_peaks <- sum(data$roi[valid_peaks] == category, na.rm = TRUE)
+      
+      batch_summary <- batch_summary %>%
+        mutate(!!count_col := ifelse(file == selected_sensor, category_peaks, .data[[count_col]]))
+      
+      cat("\nROI Category:", category, "\n")
+      cat("Number of peaks:", category_peaks, "\n")
+      if (category_peaks > 0) {
+        cat("Peak times:", paste(peak_times[data$roi[valid_peaks] == category], collapse = ", "), "\n")
+        cat("Peak values:", paste(peak_values[data$roi[valid_peaks] == category], collapse = ", "), "\n")
+      }
     }
   }
-  
-  cat("\nTotal number of peaks:", length(valid_peaks), "\n")
   
   return(batch_summary)
 }
@@ -1248,7 +1354,6 @@ update_global_environment <- function(data, batch_summary, sample_rate) {
   }
   assign("batch_summary", batch_summary, envir = .GlobalEnv)
 }
-
 
 #BDS analysis tool prototype
 BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, sample_rate) {
@@ -1306,8 +1411,8 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
     plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 2, num_rows)
     print(plotly_plot)
     
-    # Process 1s max nadir value. User can input new value if needed
-    batch_summary <- process_max_p_1s_nadir(batch_summary, selected_sensor)
+    # # Process 1s max nadir value. User can input new value if needed
+    # batch_summary <- process_max_p_1s_nadir(batch_summary, selected_sensor)
     
     # Calculate rate pressure change
     batch_summary <- calculate_rate_pressure_change(batch_summary, selected_sensor)
@@ -1341,24 +1446,69 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
     #determine if max acceleration in nadir roi occured before, on or after nadir, and time difference
     batch_summary <- nadir_acceleration_distance(data, batch_summary, selected_sensor)
     
-    #Find acceleration peaks with given criteria
-    batch_summary <- find_acceleration_peaks(data, batch_summary, selected_sensor)
-    
-    #Update sensor_summary and ensure NA columns are dropped from other sensors. 
-    #May be redundant, but plot fucntion relises on it at the moment
-    sensor_summary <- batch_summary %>%
-      filter(file == selected_sensor) %>%
-      select_if(~ any(!is.na(.)))
-    
-    # Draw plot using ROI 1 (either 6s, or user input)
-    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 4)
-    print(plotly_plot)
-    
-    #Prompt user to continue with time series normalization
-    continue_normal <- readline(prompt = "Enter Y when ready to continue with passage time series normalization: ")
-    if (toupper(continue_normal) != "Y") {
-      cat("BDS analysis tool ended.\n")
-      return(invisible())
+    #Find acceleration peaks with given criteria and show plot in a loop until user is satisfied
+    repeat {
+      # Clear previous peak data from batch_summary
+      if (exists("peak")) {  # Only clear if not first run
+        # Clear accmag_n columns
+        batch_summary <- batch_summary %>%
+          select(-matches("^accmag_\\d+$"), 
+                 -matches("^accmag_\\d+_t$"),
+                 -matches("^accmag_\\d+_p$"),
+                 -matches("_accmag_count$"))
+      }
+      
+      # Apply peak detection
+      if (!exists("peak")) {
+        batch_summary <- find_acceleration_peaks(data, batch_summary, selected_sensor)
+      } else {
+        batch_summary <- find_acceleration_peaks(data, batch_summary, selected_sensor,
+                                                 peak = peak, peak_gap = peak_gap, 
+                                                 drop = drop, drop_gap = drop_gap,
+                                                 group_window_multiplier = group_window_multiplier)
+      }
+      
+      #Update sensor_summary and ensure NA columns are dropped from other sensors
+      sensor_summary <- batch_summary %>%
+        filter(file == selected_sensor) %>%
+        select_if(~ any(!is.na(.)))
+      
+      # Draw plot using ROI 1
+      plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 4)
+      print(plotly_plot)
+      
+      # Check if peaks are satisfactory
+      peaks_ok <- readline(prompt = "Are the acceleration peaks satisfactory? (Y/N): ")
+      if (toupper(peaks_ok) == "Y") {
+        break
+      } else {
+        # Get new parameters with validation
+        repeat {
+          peak <- suppressWarnings(as.numeric(readline(prompt = "Enter new peak threshold (default 49.03): ")))
+          if (!is.na(peak)) break
+          cat("Please enter a valid number\n")
+        }
+        repeat {
+          peak_gap <- suppressWarnings(as.numeric(readline(prompt = "Enter new peak gap (default 5): ")))
+          if (!is.na(peak_gap)) break
+          cat("Please enter a valid number\n")
+        }
+        repeat {
+          drop <- suppressWarnings(as.numeric(readline(prompt = "Enter new drop threshold (default 5): ")))
+          if (!is.na(drop)) break
+          cat("Please enter a valid number\n")
+        }
+        repeat {
+          drop_gap <- suppressWarnings(as.numeric(readline(prompt = "Enter new drop gap (default 1): ")))
+          if (!is.na(drop_gap)) break
+          cat("Please enter a valid number\n")
+        }
+        repeat {
+          group_window_multiplier <- suppressWarnings(as.numeric(readline(prompt = "Enter new group window multiplier (default 3): ")))
+          if (!is.na(group_window_multiplier)) break
+          cat("Please enter a valid number\n")
+        }
+      }
     }
     
     # Perform time series normalization on ROI 1 and update data
