@@ -893,12 +893,12 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
     
     if (roi == 1) {
       cat(" (Main overall sensor passage ROI)\n")
-      row_start <- max(1, nadir_index - num_rows * 3)
-      row_end <- min(nrow(sensor_data), nadir_index + num_rows * 3)
+      row_start <- max(1, nadir_index - num_rows * 1.5)
+      row_end <- min(nrow(sensor_data), nadir_index + num_rows * 1.5)
       t_start_val <- sensor_data$time[row_start]
       t_end_val <- sensor_data$time[row_end]
-      cat("Default start time (nadir - 3s):", t_start_val, "\n")
-      cat("Default end time (nadir + 3s):", t_end_val, "\n")
+      cat("Default start time for PF (nadir - 1.5s):", t_start_val, "\n")
+      cat("Default end time for PF (nadir + 1.5s):", t_end_val, "\n")
       prompt <- "Use these default times for the main passage ROI? (Y/N): "
       
       use_default <- readline(prompt = prompt)
@@ -921,8 +921,8 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
       row_end <- min(nrow(sensor_data), nadir_index + 10)
       t_start_val <- sensor_data$time[row_start]
       t_end_val <- sensor_data$time[row_end]
-      cat("Default nadir event start time (nadir - 0.1s):", t_start_val, "\n")
-      cat("Default nadir event end time (nadir + 0.1s):", t_end_val, "\n")
+      cat("Default nadir event start time for PF (nadir - 0.1s):", t_start_val, "\n")
+      cat("Default nadir event end time for PF (nadir + 0.1s):", t_end_val, "\n")
       prompt <- "Use these default times for nadir event? (Y/N): "
       
       use_default <- readline(prompt = prompt)
@@ -941,9 +941,9 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
       
     } else if (roi == 3) {
       cat(" (Pre-nadir ROI)\n")
-      t_start_val <- sensor_data$time[max(1, which(sensor_data$time == batch_summary$t_start_roi2[batch_summary$file == selected_sensor]) - num_rows)]
+      t_start_val <- sensor_data$time[max(1, which(sensor_data$time == batch_summary$t_start_roi2[batch_summary$file == selected_sensor]) - num_rows / 2.4)]
       t_end_val <- sensor_data$time[which(sensor_data$time == batch_summary$t_start_roi2[batch_summary$file == selected_sensor])]
-      cat("Default start time (nadir ROI start - 1s):", t_start_val, "\n")
+      cat("Default start time for PF (nadir ROI start - 0.4s):", t_start_val, "\n")
       cat("End time:", t_end_val, "\n")
       prompt <- "Use default start time for pre-nadir ROI? (Y/N): "
       
@@ -962,9 +962,9 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
     } else if (roi == 4) {
       cat(" (Post-nadir ROI)\n")
       t_start_val <- sensor_data$time[which(sensor_data$time == batch_summary$t_end_roi2[batch_summary$file == selected_sensor])]
-      t_end_val <- sensor_data$time[min(nrow(sensor_data), which(sensor_data$time == batch_summary$t_end_roi2[batch_summary$file == selected_sensor]) + num_rows)]
+      t_end_val <- sensor_data$time[min(nrow(sensor_data), which(sensor_data$time == batch_summary$t_end_roi2[batch_summary$file == selected_sensor]) + num_rows /2.4)]
       cat("Start time:", t_start_val, "\n")
-      cat("Default end time (nadir ROI end + 1s):", t_end_val, "\n")
+      cat("Default end time for PF (nadir ROI end + 0.4s):", t_end_val, "\n")
       prompt <- "Use default end time for post-nadir ROI? (Y/N): "
       
       use_default <- readline(prompt = prompt)
