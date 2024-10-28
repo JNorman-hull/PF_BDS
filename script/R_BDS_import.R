@@ -941,9 +941,9 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
       
     } else if (roi == 3) {
       cat(" (Pre-nadir ROI)\n")
-      t_start_val <- sensor_data$time[max(1, which(sensor_data$time == batch_summary$t_start_roi2[batch_summary$file == selected_sensor]) - num_rows / 2.4)]
+      t_start_val <- sensor_data$time[max(1, which(sensor_data$time == batch_summary$t_start_roi2[batch_summary$file == selected_sensor]) - num_rows / 3.2)]
       t_end_val <- sensor_data$time[which(sensor_data$time == batch_summary$t_start_roi2[batch_summary$file == selected_sensor])]
-      cat("Default start time for PF (nadir ROI start - 0.4s):", t_start_val, "\n")
+      cat("Default start time for PF (nadir ROI start - 0.3s):", t_start_val, "\n")
       cat("End time:", t_end_val, "\n")
       prompt <- "Use default start time for pre-nadir ROI? (Y/N): "
       
@@ -962,9 +962,9 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
     } else if (roi == 4) {
       cat(" (Post-nadir ROI)\n")
       t_start_val <- sensor_data$time[which(sensor_data$time == batch_summary$t_end_roi2[batch_summary$file == selected_sensor])]
-      t_end_val <- sensor_data$time[min(nrow(sensor_data), which(sensor_data$time == batch_summary$t_end_roi2[batch_summary$file == selected_sensor]) + num_rows /2.4)]
+      t_end_val <- sensor_data$time[min(nrow(sensor_data), which(sensor_data$time == batch_summary$t_end_roi2[batch_summary$file == selected_sensor]) + num_rows /3.2)]
       cat("Start time:", t_start_val, "\n")
-      cat("Default end time for PF (nadir ROI end + 0.4s):", t_end_val, "\n")
+      cat("Default end time for PF (nadir ROI end + 0.3s):", t_end_val, "\n")
       prompt <- "Use default end time for post-nadir ROI? (Y/N): "
       
       use_default <- readline(prompt = prompt)
@@ -1051,7 +1051,8 @@ max_acceleration_extract <- function(data, batch_summary, selected_sensor) {
   # Create columns if they don't exist
   new_columns <- c(
     paste0("max_accmag_roi", 1:6),
-    paste0("max_accmag_time_roi", 1:6)
+    paste0("max_accmag_time_roi", 1:6),
+    "nadir_acceleration"  # Add new column
   )
   for (col in new_columns) {
     if (!(col %in% colnames(batch_summary))) {
@@ -1082,7 +1083,24 @@ max_acceleration_extract <- function(data, batch_summary, selected_sensor) {
       )
   }
   
-# Print results to console
+  # Extract acceleration at nadir
+  t_nadir <- batch_summary %>% 
+    filter(file == selected_sensor) %>% 
+    pull(t_nadir)
+  
+  nadir_acceleration <- sensor_data %>%
+    filter(time == t_nadir) %>%
+    pull(accmag)
+  
+  # Update batch_summary with nadir acceleration
+  batch_summary <- batch_summary %>%
+    mutate(
+      nadir_acceleration = if_else(file == selected_sensor, 
+                                   nadir_acceleration, 
+                                   nadir_acceleration)
+    )
+  
+  # Print results to console
   cat("\nMaximum acceleration values:\n")
   cat("ROI 1 (Main overall sensor passage) max acceleration:", batch_summary$max_accmag_roi1[batch_summary$file == selected_sensor], "\n")
   cat("ROI 2 (nadir event) max acceleration:", batch_summary$max_accmag_roi2[batch_summary$file == selected_sensor], "\n")
@@ -1090,6 +1108,7 @@ max_acceleration_extract <- function(data, batch_summary, selected_sensor) {
   cat("ROI 4 (post-nadir ROI) acceleration:", batch_summary$max_accmag_roi4[batch_summary$file == selected_sensor], "\n")
   cat("ROI 5 (inection to pre-nadir ROI) acceleration:", batch_summary$max_accmag_roi5[batch_summary$file == selected_sensor], "\n")
   cat("ROI 6 (post-nadir to recovery ROI) acceleration:", batch_summary$max_accmag_roi6[batch_summary$file == selected_sensor], "\n")
+  cat("Acceleration at nadir:", nadir_acceleration, "\n")  # Add print statement for nadir acceleration
   
   return(batch_summary)
 }
