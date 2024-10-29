@@ -828,22 +828,27 @@ calculate_rate_pressure_change <- function(batch_summary, selected_sensor) {
   batch_summary
 }
 
+# set_max_acclimation_pressure <- function(default_pressure = 1000) {
+#   cat("Default maximum acclimation pressure is set to", default_pressure, "mbar.\n")
+#   change_max_acclim <- readline(prompt = "Do you want to change the maximum acclimation pressure? (Y/N): ")
+#   
+#   if (toupper(change_max_acclim) == "Y") {
+#     max_acclim <- as.numeric(readline(prompt = "Enter new maximum acclimation pressure: "))
+#     while (is.na(max_acclim)) {
+#       cat("Invalid input. Please enter a numeric value.\n")
+#       max_acclim <- as.numeric(readline(prompt = "Enter new maximum acclimation pressure: "))
+#     }
+#   } else {
+#     max_acclim <- default_pressure
+#   }
+#   
+#   cat("Maximum acclimation pressure set to", max_acclim, "mbar.\n")
+#   return(max_acclim)
+# }
+
 set_max_acclimation_pressure <- function(default_pressure = 1000) {
   cat("Default maximum acclimation pressure is set to", default_pressure, "mbar.\n")
-  change_max_acclim <- readline(prompt = "Do you want to change the maximum acclimation pressure? (Y/N): ")
-  
-  if (toupper(change_max_acclim) == "Y") {
-    max_acclim <- as.numeric(readline(prompt = "Enter new maximum acclimation pressure: "))
-    while (is.na(max_acclim)) {
-      cat("Invalid input. Please enter a numeric value.\n")
-      max_acclim <- as.numeric(readline(prompt = "Enter new maximum acclimation pressure: "))
-    }
-  } else {
-    max_acclim <- default_pressure
-  }
-  
-  cat("Maximum acclimation pressure set to", max_acclim, "mbar.\n")
-  return(max_acclim)
+  max_acclim <- default_pressure
 }
 
 calculate_ratio_pressure_change <- function(batch_summary, selected_sensor, max_acclim) {
@@ -870,7 +875,6 @@ calculate_ratio_pressure_change <- function(batch_summary, selected_sensor, max_
 }
 
 prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_sensor, num_rows) {
-  #ROI selection tool
   sensor_data <- data %>% filter(long_id == selected_sensor)
   t_nadir_val <- batch_summary %>% filter(file == selected_sensor) %>% pull(t_nadir)
   nadir_index <- which(sensor_data$time == t_nadir_val)
@@ -899,21 +903,6 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
       t_end_val <- sensor_data$time[row_end]
       cat("Default start time for PF (nadir - 1.5s):", t_start_val, "\n")
       cat("Default end time for PF (nadir + 1.5s):", t_end_val, "\n")
-      prompt <- "Use these default times for the main passage ROI? (Y/N): "
-      
-      use_default <- readline(prompt = prompt)
-      
-      if (toupper(use_default) != "Y") {
-        cat(paste("Enter custom start and end times for ROI", roi, "\n"))
-        t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
-        t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
-        
-        while (is.na(t_start_val) || is.na(t_end_val) || t_start_val >= t_end_val) {
-          cat("Invalid input. Please ensure start time is less than end time and both are numeric.\n")
-          t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
-          t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
-        }
-      }
       
     } else if (roi == 2) {
       cat(" (Nadir event ROI)\n")
@@ -923,21 +912,6 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
       t_end_val <- sensor_data$time[row_end]
       cat("Default nadir event start time for PF (nadir - 0.1s):", t_start_val, "\n")
       cat("Default nadir event end time for PF (nadir + 0.1s):", t_end_val, "\n")
-      prompt <- "Use these default times for nadir event? (Y/N): "
-      
-      use_default <- readline(prompt = prompt)
-      
-      if (toupper(use_default) != "Y") {
-        cat(paste("Enter custom start and end times for ROI", roi, "\n"))
-        t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
-        t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
-        
-        while (is.na(t_start_val) || is.na(t_end_val) || t_start_val >= t_end_val) {
-          cat("Invalid input. Please ensure start time is less than end time and both are numeric.\n")
-          t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
-          t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
-        }
-      }
       
     } else if (roi == 3) {
       cat(" (Pre-nadir ROI)\n")
@@ -945,19 +919,6 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
       t_end_val <- sensor_data$time[which(sensor_data$time == batch_summary$t_start_roi2[batch_summary$file == selected_sensor])]
       cat("Default start time for PF (nadir ROI start - 0.3s):", t_start_val, "\n")
       cat("End time:", t_end_val, "\n")
-      prompt <- "Use default start time for pre-nadir ROI? (Y/N): "
-      
-      use_default <- readline(prompt = prompt)
-      
-      if (toupper(use_default) != "Y") {
-        cat("Enter custom start time for pre-nadir ROI\n")
-        t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
-        
-        while (is.na(t_start_val) || t_start_val >= t_end_val) {
-          cat("Invalid input. Please ensure start time is less than end time and is numeric.\n")
-          t_start_val <- as.numeric(readline(prompt = "Enter start time value: "))
-        }
-      }
       
     } else if (roi == 4) {
       cat(" (Post-nadir ROI)\n")
@@ -965,30 +926,17 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
       t_end_val <- sensor_data$time[min(nrow(sensor_data), which(sensor_data$time == batch_summary$t_end_roi2[batch_summary$file == selected_sensor]) + num_rows /3.2)]
       cat("Start time:", t_start_val, "\n")
       cat("Default end time for PF (nadir ROI end + 0.3s):", t_end_val, "\n")
-      prompt <- "Use default end time for post-nadir ROI? (Y/N): "
-      
-      use_default <- readline(prompt = prompt)
-      
-      if (toupper(use_default) != "Y") {
-        cat("Enter custom end time for post-nadir ROI\n")
-        t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
-        
-        while (is.na(t_end_val) || t_end_val <= t_start_val) {
-          cat("Invalid input. Please ensure end time is greater than start time and is numeric.\n")
-          t_end_val <- as.numeric(readline(prompt = "Enter end time value: "))
-        }
-      }
       
     } else if (roi == 5) {
       t_start_val <- batch_summary$t_start_roi1[batch_summary$file == selected_sensor]
       t_end_val <- batch_summary$t_start_roi3[batch_summary$file == selected_sensor]
-      cat("ROI 5 automatically labelled (inj_to_pre_nadir)\n")
+      cat(" (inj_to_pre_nadir)\n")
       cat("Start time:", t_start_val, "\n")
       cat("End time:", t_end_val, "\n")
     } else if (roi == 6) {
       t_start_val <- batch_summary$t_end_roi4[batch_summary$file == selected_sensor]
       t_end_val <- batch_summary$t_end_roi1[batch_summary$file == selected_sensor]
-      cat("ROI 6 automatically labelled (post_nadir_to_rec)\n")
+      cat(" (post_nadir_to_rec)\n")
       cat("Start time:", t_start_val, "\n")
       cat("End time:", t_end_val, "\n")
     }
@@ -1092,13 +1040,11 @@ max_acceleration_extract <- function(data, batch_summary, selected_sensor) {
     filter(time == t_nadir) %>%
     pull(accmag)
   
-  # Update batch_summary with nadir acceleration
-  batch_summary <- batch_summary %>%
-    mutate(
-      nadir_acceleration = if_else(file == selected_sensor, 
-                                   nadir_acceleration, 
-                                   nadir_acceleration)
-    )
+  cat("Debug: t_nadir:", t_nadir, "\n")
+  cat("Debug: nadir_acceleration:", nadir_acceleration, "\n")
+  
+  # Update batch_summary with nadir acceleration 
+  batch_summary[batch_summary$file == selected_sensor, "nadir_acceleration"] <- nadir_acceleration
   
   # Print results to console
   cat("\nMaximum acceleration values:\n")
@@ -1140,11 +1086,8 @@ nadir_acceleration_distance <- function(data, batch_summary, selected_sensor) {
   }
   
   # Update batch_summary with new values
-  batch_summary <- batch_summary %>%
-    mutate(
-      max_nadir_acc_dist = ifelse(file == selected_sensor, max_nadir_acc_dist, max_nadir_acc_dist),
-      max_nadir_acc_position = ifelse(file == selected_sensor, max_nadir_acc_position, max_nadir_acc_position)
-    )
+  batch_summary[batch_summary$file == selected_sensor, "max_nadir_acc_dist"] <- max_nadir_acc_dist
+  batch_summary[batch_summary$file == selected_sensor, "max_nadir_acc_position"] <- max_nadir_acc_position
   
   # Print message to console
   cat("\nAcceleration time relative to nadir (nadir ROI only):")
@@ -1288,6 +1231,10 @@ find_acceleration_peaks <- function(data, batch_summary, selected_sensor,
       batch_summary[[pres_col]] <- NA_real_
     }
     
+    if (!("guide_vane_contact" %in% colnames(batch_summary))) {
+      batch_summary$guide_vane_contact <- 0
+    }
+    
     batch_summary <- batch_summary %>%
       mutate(
         !!accmag_col := ifelse(file == selected_sensor, peak_values[i], .data[[accmag_col]]),
@@ -1319,8 +1266,18 @@ find_acceleration_peaks <- function(data, batch_summary, selected_sensor,
     }
   }
   
+  if ("post_nadir_event_accmag_count" %in% colnames(batch_summary)) {
+    batch_summary <- batch_summary %>%
+      mutate(guide_vane_contact = ifelse(
+        file == selected_sensor & post_nadir_event_accmag_count > 0,
+        1,
+        guide_vane_contact
+      ))
+  }
+  
   return(batch_summary)
 }
+
 
 time_normalization <- function(data, selected_sensor) {
   # normalize time series for overall passage (ROI 1) by 0 - 1 with nadir at 0.5
@@ -1450,8 +1407,8 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
     }
     
     # Draw plot for ROI selection
-    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 3)
-    print(plotly_plot)
+    # plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 3)
+    # print(plotly_plot)
     
     # Prompt user to enter ROI
     batch_summary <- prompt_for_injection_tailwater_times(data, batch_summary, selected_sensor, num_rows)
