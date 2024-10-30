@@ -1074,7 +1074,7 @@ nadir_acceleration_distance <- function(data, batch_summary, selected_sensor) {
   
   # Calculate the time difference using fixed time step
   fixed_time_step <- 0.01  # 0.01 seconds per row
-  max_nadir_acc_dist <- abs(row_diff) * fixed_time_step
+  max_nadir_acc_dist <- row_diff * fixed_time_step
   
   # Determine the position relative to nadir
   if (row_diff < 0) {
@@ -1098,7 +1098,7 @@ nadir_acceleration_distance <- function(data, batch_summary, selected_sensor) {
 }
 
 find_acceleration_peaks <- function(data, batch_summary, selected_sensor, 
-                                    peak = 49.03, peak_gap = 5, drop = 5, drop_gap = 1,
+                                    peak = 49.03, peak_gap = 5, drop = 15, drop_gap = 1,
                                     group_window_multiplier = 3) {
   # Filter data within t_start_roi1 to t_end_roi1 (overall passage)
   roi_start <- batch_summary$t_start_roi1[batch_summary$file == selected_sensor]
@@ -1167,12 +1167,17 @@ find_acceleration_peaks <- function(data, batch_summary, selected_sensor,
         cat("Debug: Drop values:", paste(drops, collapse = ", "), "\n")
         
         if (any(drops)) {
-          # First peak is always kept
-          valid_peaks_in_group <- c(group_indices[1])
-          cat("\nDebug: Keeping first peak:", group_values[1], "at time", group_times[1], "\n")
+          # Find highest peak before first drop
+          drop_points <- which(drops)
+          first_section_end <- drop_points[1]
+          first_section_peak_idx <- which.max(group_values[1:first_section_end])
+          valid_peaks_in_group <- c(group_indices[first_section_peak_idx])
+          
+          cat("\nDebug: Keeping highest peak before drop:", 
+              group_values[first_section_peak_idx], 
+              "at time", group_times[first_section_peak_idx], "\n")
           
           # For each drop, find the highest peak between this drop and the next
-          drop_points <- which(drops)
           for (i in seq_along(drop_points)) {
             start_idx <- drop_points[i] + 1
             end_idx <- if (i == length(drop_points)) length(group_indices) else drop_points[i + 1]
