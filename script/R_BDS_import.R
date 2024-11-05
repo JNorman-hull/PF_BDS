@@ -365,14 +365,18 @@ add_video_metrics <- function(batch_meta_dir) {
   
   # Define the columns to extract
   cols_to_extract <- c(
-    "treatment", "inj_pos", "frame_in", "frame_out", 
-    "sens_rows", "sens_wc_pos_ent", "sens_wc_pos_blade", "sens_ec_orien", 
-    "sens_velocity", "pre_swirl", "sens_wc_pos_exit", "clear_passage", 
-    "passage_loc", "pl_frame", "centre_hub_contact", "blade_contact", 
-    "n_contact", "c_1_bl", "c_1_sl", "c_1_bv", "c_1_f", "c_2_bl", 
-    "c_2_sl", "c_2_bv", "c_2_f", "c_3_bl", "c_3_sl", "c_3_bv", "c_3_f"
+    "treatment", "inj_pos", "frame_in", "frame_out", "pl_frame", "c_1_f", "c_2_f",
+    "sens_wc_pos_ent", "sens_wc_pos_blade","sens_wc_pos_exit",
+    "clear_passage", "rotate_hub", "pres_force", "passage_loc",
+    "centre_hub_contact", "blade_contact", "n_contact",
+    "c_1_bl", "c_1_sl", "c_1_bv", "c_1_type",
+    "c_2_bl", "c_2_sl", "c_2_bv", "c_2_type"
   )
   
+  #Removed cols not needed for 400_1, 500_1
+  # Kept frame info incase needed
+  # removed orientation as not likely to analyse  "sens_ec_orien", 
+  #sens_velocity", "pre_swirl", "c_3_bl", "c_3_sl", "c_3_bv", "c_3_f"
   # Read video metrics and select columns
   video_metrics <- read_csv(video_metrics_path, show_col_types = FALSE) %>%
     select(sens_file, all_of(cols_to_extract))
