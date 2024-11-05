@@ -1325,20 +1325,58 @@ time_normalization <- function(data, selected_sensor) {
   return(data)
 }
 
-update_global_environment <- function(data, batch_summary, sample_rate) {
-  if (sample_rate == 250) {
-    data_250hz <- data
-    assign("data_250hz", data_250hz, envir = .GlobalEnv)
+update_global_environment <- function(data, batch_summary, sample_rate, selected_sensor) {
+  # Get current global data
+  current_data <- if (sample_rate == 250) {
+    get("data_250hz", envir = .GlobalEnv)
   } else if (sample_rate == 100) {
-    data_100hz <- data
-    assign("data_100hz", data_100hz, envir = .GlobalEnv)
+    get("data_100hz", envir = .GlobalEnv)
   } else if (sample_rate == "100_imp") {
-    data_100_imp <- data
-    assign("data_100_imp", data_100_imp, envir = .GlobalEnv)
+    get("data_100_imp", envir = .GlobalEnv)
   } else if (sample_rate == "2000_hig") {
-    data_2000_hig <- data
-    assign("data_2000_hig", data_2000_hig, envir = .GlobalEnv)
+    get("data_2000_hig", envir = .GlobalEnv)
   }
+  
+  # Initialize new columns in current_data if they don't exist
+  if(!"passage_point" %in% names(current_data)) {
+    current_data$passage_point <- factor(NA, levels = c("post_nadir", "pre_nadir"))
+  }
+  if(!"roi" %in% names(current_data)) {
+    current_data$roi <- factor(NA, levels = c("inj_to_pre_nadir", "pre_nadir_event", 
+                                              "nadir_event", "post_nadir_event", "post_nadir_to_rec"))
+  }
+  if(!"time_norm" %in% names(current_data)) {
+    current_data$time_norm <- 0
+  }
+  
+  # Handle specific factor columns in update data
+  data$long_id <- factor(data$long_id, levels = levels(current_data$long_id))
+  if(!is.null(data$passage_point)) {
+    data$passage_point <- factor(data$passage_point, levels = c("post_nadir", "pre_nadir"))
+  }
+  if(!is.null(data$roi)) {
+    data$roi <- factor(data$roi, levels = c("inj_to_pre_nadir", "pre_nadir_event", 
+                                            "nadir_event", "post_nadir_event", "post_nadir_to_rec"))
+  }
+  
+  # Update only rows for current sensor
+  current_data <- current_data %>%
+    rows_update(
+      data %>% filter(long_id == selected_sensor),
+      by = c("time", "long_id")
+    )
+  
+  # Assign back to global environment
+  if (sample_rate == 250) {
+    assign("data_250hz", current_data, envir = .GlobalEnv)
+  } else if (sample_rate == 100) {
+    assign("data_100hz", current_data, envir = .GlobalEnv)
+  } else if (sample_rate == "100_imp") {
+    assign("data_100_imp", current_data, envir = .GlobalEnv)
+  } else if (sample_rate == "2000_hig") {
+    assign("data_2000_hig", current_data, envir = .GlobalEnv)
+  }
+  
   assign("batch_summary", batch_summary, envir = .GlobalEnv)
 }
 
@@ -1474,7 +1512,7 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
   }
   
   # Update global environment to reassign batch_summary and data.
-  update_global_environment(data, batch_summary, sample_rate)
+  update_global_environment(data, batch_summary, sample_rate, selected_sensor)
   
   # BDS analysis complete. Prompt user to continue or end
   cat("BDS analysis complete for", selected_sensor, "\n")
