@@ -956,6 +956,10 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
 assign_passage_points <- function(data, batch_summary, selected_sensor, sample_rate) {
   cat("\nAssigning passage points for sensor:", selected_sensor, "\n")
   
+  # First ensure the columns exist
+  if(!"passage_point" %in% names(data)) data$passage_point <- NA_character_
+  if(!"roi" %in% names(data)) data$roi <- NA_character_
+  
   # Filter the data for the selected sensor
   data_sensor <- data %>% filter(long_id == selected_sensor)
   
@@ -984,8 +988,8 @@ assign_passage_points <- function(data, batch_summary, selected_sensor, sample_r
   cat("Passage points and ROIs assigned to", selected_sensor, "\n")
   
   # Update the data for the selected sensor
-  rows_to_update <- which(data$long_id == selected_sensor)
-  data[rows_to_update, names(data_sensor)] <- data_sensor
+  data <- data %>%
+    rows_update(data_sensor, by = c("time", "long_id"))
   
   return(data)
 }
@@ -1098,7 +1102,7 @@ nadir_acceleration_distance <- function(data, batch_summary, selected_sensor) {
 }
 
 find_acceleration_peaks <- function(data, batch_summary, selected_sensor, 
-                                    peak = 49.03, peak_gap = 5, drop = 15, drop_gap = 1,
+                                    peak = 98.1, peak_gap = 5, drop = 35, drop_gap = 1,
                                     group_window_multiplier = 3) {
   # Filter data within t_start_roi1 to t_end_roi1 (overall passage)
   roi_start <- batch_summary$t_start_roi1[batch_summary$file == selected_sensor]
@@ -1311,9 +1315,11 @@ time_normalization <- function(data, selected_sensor) {
   
   # Merge the normalized time back into the original data
   data <- data %>%
-    left_join(select(data_sensor, time, long_id, time_norm_new), by = c("time", "long_id")) %>%
-    mutate(time_norm = coalesce(time_norm_new, time_norm)) %>%
-    select(-time_norm_new)
+    rows_update(
+      select(data_sensor, time, long_id, time_norm_new) %>%
+        rename(time_norm = time_norm_new),
+      by = c("time", "long_id")
+    )
   
   cat("Injection to tailwater passage time normalization complete\n")
   return(data)
@@ -1427,69 +1433,24 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
     #determine if max acceleration in nadir roi occured before, on or after nadir, and time difference
     batch_summary <- nadir_acceleration_distance(data, batch_summary, selected_sensor)
     
-    #Find acceleration peaks with given criteria and show plot in a loop until user is satisfied
-    repeat {
-      # Clear previous peak data from batch_summary
-      if (exists("peak")) {  # Only clear if not first run
-        # Clear accmag_n columns
-        batch_summary <- batch_summary %>%
-          select(-matches("^accmag_\\d+$"), 
-                 -matches("^accmag_\\d+_t$"),
-                 -matches("^accmag_\\d+_p$"),
-                 -matches("_accmag_count$"))
-      }
-      
-      # Apply peak detection
-      if (!exists("peak")) {
-        batch_summary <- find_acceleration_peaks(data, batch_summary, selected_sensor)
-      } else {
-        batch_summary <- find_acceleration_peaks(data, batch_summary, selected_sensor,
-                                                 peak = peak, peak_gap = peak_gap, 
-                                                 drop = drop, drop_gap = drop_gap,
-                                                 group_window_multiplier = group_window_multiplier)
-      }
-      
-      #Update sensor_summary and ensure NA columns are dropped from other sensors
-      sensor_summary <- batch_summary %>%
-        filter(file == selected_sensor) %>%
-        select_if(~ any(!is.na(.)))
-      
-      # Draw plot using ROI 1
-      plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 4)
-      print(plotly_plot)
-      
-      # Check if peaks are satisfactory
-      peaks_ok <- readline(prompt = "Are the acceleration peaks satisfactory? (Y/N): ")
-      if (toupper(peaks_ok) == "Y") {
-        break
-      } else {
-        # Get new parameters with validation
-        repeat {
-          peak <- suppressWarnings(as.numeric(readline(prompt = "Enter new peak threshold (default 49.03): ")))
-          if (!is.na(peak)) break
-          cat("Please enter a valid number\n")
-        }
-        repeat {
-          peak_gap <- suppressWarnings(as.numeric(readline(prompt = "Enter new peak gap (default 5): ")))
-          if (!is.na(peak_gap)) break
-          cat("Please enter a valid number\n")
-        }
-        repeat {
-          drop <- suppressWarnings(as.numeric(readline(prompt = "Enter new drop threshold (default 5): ")))
-          if (!is.na(drop)) break
-          cat("Please enter a valid number\n")
-        }
-        repeat {
-          drop_gap <- suppressWarnings(as.numeric(readline(prompt = "Enter new drop gap (default 1): ")))
-          if (!is.na(drop_gap)) break
-          cat("Please enter a valid number\n")
-        }
-        repeat {
-          group_window_multiplier <- suppressWarnings(as.numeric(readline(prompt = "Enter new group window multiplier (default 3): ")))
-          if (!is.na(group_window_multiplier)) break
-          cat("Please enter a valid number\n")
-        }
-      }
+    #Find acceleration peaks with given criteria
+    batch_summary <- find_acceleration_peaks(data, batch_summary, selected_sensor)
+    
+    #Update sensor_summary and ensure NA columns are dropped from other sensors. 
+    #May be redundant, but plot fucntion relises on it at the moment
+    sensor_summary <- batch_summary %>%
+      filter(file == selected_sensor) %>%
+      select_if(~ any(!is.na(.)))
+    
+    # Draw plot using ROI 1 
+    plotly_plot <- create_combined_plot(data, sensor_summary, selected_sensor, stage = 4)
+    print(plotly_plot)
+    
+    #Prompt user to continue with time series normalization
+    continue_normal <- readline(prompt = "Enter Y when ready to continue with passage time series normalization: ")
+    if (toupper(continue_normal) != "Y") {
+      cat("BDS analysis tool ended.\n")
+      return(invisible())
     }
     
     # Perform time series normalization on ROI 1 and update data
@@ -1525,7 +1486,6 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
   }
   # End of BDS analysis   
 }
-
 
 
 ##4.1 Misc####

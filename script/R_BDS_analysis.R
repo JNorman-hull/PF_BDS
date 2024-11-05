@@ -32,10 +32,10 @@ rapid_hig_dir <- file.path(batch_meta_dir, "RAPID_HIG")
 #   slice(-2)
 
 Filter and save specific sensor dataset
-C590909160221 <- data_250hz %>%
-  filter(long_id == "C590909160221" & !is.na(passage_point))
+B76_0704123317_imp  <- data_100_imp %>%
+  filter(long_id == "B76-0704123317_imp" & !is.na(passage_point))
 
-write.csv(C590909160221, "C590909160221.csv", row.names = FALSE)
+write.csv(B76_0704123317_imp, "B76_0704123317_imp.csv", row.names = FALSE)
 
 #Filter by variable conditions
 # vertical bar (|) = OR  & = AND
@@ -136,8 +136,8 @@ batch_summary=read_csv("./PROCESSED_data/processed_500_1_batch_summary.csv")
 BDSAnalysisTool(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, "100_imp")
 
 #Apply manual passage/time normalisation due to bug in tool
-assign_passage_points_manual("250", batch_summary)
-time_normalization_manual("250", batch_summary)
+assign_passage_points_manual("100_imp", batch_summary)
+time_normalization_manual("100_imp", batch_summary)
 
 #Save and exported ROI processed data frame, either for continued processing, or for further analysis
 save_data(batch_summary, data_100hz, data_250hz, data_100_imp, data_2000_hig)
@@ -148,8 +148,13 @@ process_batch_files(batch_meta_dir, bds100_dir, bds250_dir, rapid_imp_dir, rapid
 
 add_video_metrics(batch_meta_dir)
 
+rm(data_2000_hig, data_100hz, data_250hz)
+
+
 BDSAnalysisTool(batch_summary, data_250hz, data_100hz, data_100_imp, data_2000_hig, "100_imp")
 
+
+#Updated assign passae points and tiem normalisation, didn't fix problem, did a lot of work to globvisation, didn't fix problem.
 
 write.csv(data_250hz, "./PROCESSED_data/processed_KATHA.csv", row.names = FALSE)
 
