@@ -719,7 +719,7 @@ check_sensor <- function(batch_summary, selected_sensor) {
   }
 }
 
-process_nadir_value <- function(batch_summary, selected_sensor) {
+process_nadir_value <- function(batch_summary, selected_sensor, data) {
   is_nadir_correct <- readline(prompt = "Is nadir value correct? (Y/N): ")
   
   if (toupper(is_nadir_correct) == "Y") {
@@ -730,10 +730,18 @@ process_nadir_value <- function(batch_summary, selected_sensor) {
       )
     cat("Nadir values recorded in batch summary\n")
   } else if (toupper(is_nadir_correct) == "N") {
-    new_nadir_value <- as.numeric(readline(prompt = "Enter new nadir value: "))
     new_nadir_time <- as.numeric(readline(prompt = "Enter new nadir time: "))
-    if (is.na(new_nadir_value) || is.na(new_nadir_time)) {
-      stop("Invalid nadir value or time")
+    if (is.na(new_nadir_time)) {
+      stop("Invalid time value")
+    }
+    
+    # Get corresponding pressure value from data
+    new_nadir_value <- data %>%
+      filter(long_id == selected_sensor, time == new_nadir_time) %>%
+      pull(pres)
+    
+    if (length(new_nadir_value) == 0) {
+      stop("No pressure value found for the specified time")
     }
     
     batch_summary <- batch_summary %>%
@@ -741,7 +749,8 @@ process_nadir_value <- function(batch_summary, selected_sensor) {
         nadir = ifelse(file == selected_sensor, new_nadir_value, nadir),
         t_nadir = ifelse(file == selected_sensor, new_nadir_time, t_nadir)
       )
-    cat("New nadir values recorded in batch summary\n")
+    cat(sprintf("New nadir time: %.2f, corresponding pressure: %.1f mbar\n", 
+                new_nadir_time, new_nadir_value))
   } else {
     cat("Invalid input. Please enter 'Y' or 'N'.\n")
   }
@@ -1426,7 +1435,7 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
     cat("Proceeding with BDS analysis...\n")
     
     # Process nadir value. User can input new value if needed
-    batch_summary <- process_nadir_value(batch_summary, selected_sensor)
+    batch_summary <- process_nadir_value(batch_summary, selected_sensor, data)
     
     # Calculate max pressure within 1s before the nadir
     batch_summary <- calculate_max_pressure_before_nadir(data, batch_summary, selected_sensor, num_rows)
