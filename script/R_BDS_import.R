@@ -1114,6 +1114,35 @@ nadir_acceleration_distance <- function(data, batch_summary, selected_sensor) {
   return(batch_summary)
 }
 
+acceleration_rms <- function(data, batch_summary, selected_sensor) {
+  # Get ROI times for nadir event
+  roi_start <- batch_summary$t_start_roi2[batch_summary$file == selected_sensor]
+  roi_end <- batch_summary$t_end_roi2[batch_summary$file == selected_sensor]
+  
+  # Filter data and calculate RMS
+  roi_data <- data %>%
+    filter(long_id == selected_sensor,
+           time >= roi_start,
+           time <= roi_end)
+  
+  # Calculate RMS acceleration
+  rms_acc <- roi_data %>%
+    summarise(acc_rms = sqrt(mean(accmag^2))) %>%
+    pull(acc_rms)
+  
+  # Add RMS column if it doesn't exist
+  if(!("acc_rms" %in% names(batch_summary))) {
+    batch_summary$acc_rms <- NA_real_
+  }
+  
+  # Update batch_summary
+  batch_summary$acc_rms[batch_summary$file == selected_sensor] <- rms_acc
+
+  cat("RMS acceleration for nadir event ROI:", round(rms_acc, 2), "m/s²\n")
+  
+  return(batch_summary)
+}
+
 find_acceleration_peaks <- function(data, batch_summary, selected_sensor, 
                                     peak = 98.1, peak_gap = 5, drop = 35, drop_gap = 1,
                                     group_window_multiplier = 3) {
@@ -1483,6 +1512,9 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
     
     #determine if max acceleration in nadir roi occured before, on or after nadir, and time difference
     batch_summary <- nadir_acceleration_distance(data, batch_summary, selected_sensor)
+    
+    #Calculate RMS acceleration for nadir event
+    batch_summary <- acceleration_rms(data, batch_summary, selected_sensor)
     
     #Find acceleration peaks with given criteria
     batch_summary <- find_acceleration_peaks(data, batch_summary, selected_sensor)
