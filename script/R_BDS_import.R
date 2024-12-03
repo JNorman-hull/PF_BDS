@@ -1076,6 +1076,66 @@ max_acceleration_extract <- function(data, batch_summary, selected_sensor) {
   return(batch_summary)
 }
 
+max_hig_extract <- function(data_2000_hig, batch_summary, selected_sensor) {
+  # Convert selected_sensor ID from _imp to _hig
+  hig_sensor <- gsub("_imp$", "_hig", selected_sensor)
+  
+  # Create columns if they don't exist
+  new_columns <- c(
+    paste0("max_hig_roi", 1:6),
+    paste0("max_hig_time_roi", 1:6)
+  )
+  for (col in new_columns) {
+    if (!(col %in% colnames(batch_summary))) {
+      batch_summary[[col]] <- NA_real_
+    }
+  }
+  
+  # Check if HIG data exists for this sensor
+  if (!hig_sensor %in% unique(data_2000_hig$long_id)) {
+    cat("\nNo HIG data available for this sensor\n")
+    batch_summary <- batch_summary %>%
+      mutate(
+        across(starts_with("max_hig_roi"), ~ifelse(file == selected_sensor, NA_real_, .)),
+        across(starts_with("max_hig_time_roi"), ~ifelse(file == selected_sensor, NA_real_, .))
+      )
+    return(batch_summary)
+  }
+  
+  # Extract max HIG for each ROI
+  for (roi in 1:6) {
+    t_start <- batch_summary %>% 
+      filter(file == selected_sensor) %>% 
+      pull(!!paste0("t_start_roi", roi))
+    t_end <- batch_summary %>% 
+      filter(file == selected_sensor) %>% 
+      pull(!!paste0("t_end_roi", roi))
+    
+    roi_data <- data_2000_hig %>% 
+      filter(long_id == hig_sensor,
+             time >= t_start & time <= t_end)
+    
+    max_hig <- if(nrow(roi_data) > 0) max(roi_data$HIGaccmag, na.rm = TRUE) else NA_real_
+    max_hig_time <- if(nrow(roi_data) > 0) roi_data$time[which.max(roi_data$HIGaccmag)] else NA_real_
+    
+    batch_summary <- batch_summary %>%
+      mutate(
+        !!paste0("max_hig_roi", roi) := ifelse(file == selected_sensor, max_hig, !!sym(paste0("max_hig_roi", roi))),
+        !!paste0("max_hig_time_roi", roi) := ifelse(file == selected_sensor, max_hig_time, !!sym(paste0("max_hig_time_roi", roi)))
+      )
+  }
+  
+  cat("\nMaximum HIG acceleration values:\n")
+  for(roi in 1:6) {
+    val <- batch_summary[[paste0("max_hig_roi", roi)]][batch_summary$file == selected_sensor]
+    cat(sprintf("ROI %d max HIG: %s\n", 
+                roi, 
+                ifelse(is.na(val), "NA", sprintf("%f", val))))
+  }
+  
+  return(batch_summary)
+}
+
 nadir_acceleration_distance <- function(data, batch_summary, selected_sensor) {
   # Extract relevant values from batch_summary
   sensor_summary <- batch_summary[batch_summary$file == selected_sensor, ]
@@ -1107,7 +1167,7 @@ nadir_acceleration_distance <- function(data, batch_summary, selected_sensor) {
   batch_summary[batch_summary$file == selected_sensor, "max_nadir_acc_position"] <- max_nadir_acc_position
   
   # Print message to console
-  cat("\nAcceleration time relative to nadir (nadir ROI only):")
+  cat("\nnadir ROI: Max acceleration time differnce from nadir")
   cat(sprintf("\nMaximum acceleration in nadir ROI occurred %.3f seconds (%d rows) %s.\n", 
               max_nadir_acc_dist, abs(row_diff), max_nadir_acc_position))
   
@@ -1509,6 +1569,11 @@ BDSAnalysisTool <- function(batch_summary, data_250hz, data_100hz, data_100_imp,
     
     #Find max acceleration values within each ROI
     batch_summary <- max_acceleration_extract(data, batch_summary, selected_sensor)
+    
+    # Add HIG extraction for 100_imp sensors
+    if (sample_rate == "100_imp") {
+      batch_summary <- max_hig_extract(data_2000_hig, batch_summary, selected_sensor)
+    }
     
     #determine if max acceleration in nadir roi occured before, on or after nadir, and time difference
     batch_summary <- nadir_acceleration_distance(data, batch_summary, selected_sensor)
