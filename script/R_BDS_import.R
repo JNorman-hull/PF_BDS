@@ -887,6 +887,8 @@ calculate_ratio_pressure_change <- function(batch_summary, selected_sensor, max_
   batch_summary
 }
 
+#Modify times to reflect increased passage duration for 50% data
+
 prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_sensor, num_rows) {
   sensor_data <- data %>% filter(long_id == selected_sensor)
   t_nadir_val <- batch_summary %>% filter(file == selected_sensor) %>% pull(t_nadir)
@@ -910,35 +912,35 @@ prompt_for_injection_tailwater_times <- function(data, batch_summary, selected_s
     
     if (roi == 1) {
       cat(" (Main overall sensor passage ROI)\n")
-      row_start <- max(1, nadir_index - num_rows * 1.5)
-      row_end <- min(nrow(sensor_data), nadir_index + num_rows * 1.5)
+      row_start <- max(1, nadir_index - num_rows * 2)
+      row_end <- min(nrow(sensor_data), nadir_index + num_rows * 2)
       t_start_val <- sensor_data$time[row_start]
       t_end_val <- sensor_data$time[row_end]
-      cat("Default start time for PF (nadir - 1.5s):", t_start_val, "\n")
-      cat("Default end time for PF (nadir + 1.5s):", t_end_val, "\n")
+      cat("Default start time for PF (nadir - 2s):", t_start_val, "\n")
+      cat("Default end time for PF (nadir + 2s):", t_end_val, "\n")
       
     } else if (roi == 2) {
       cat(" (Nadir event ROI)\n")
-      row_start <- max(1, nadir_index - 10)
-      row_end <- min(nrow(sensor_data), nadir_index + 10)
+      row_start <- max(1, nadir_index - 20)
+      row_end <- min(nrow(sensor_data), nadir_index + 20)
       t_start_val <- sensor_data$time[row_start]
       t_end_val <- sensor_data$time[row_end]
-      cat("Default nadir event start time for PF (nadir - 0.1s):", t_start_val, "\n")
-      cat("Default nadir event end time for PF (nadir + 0.1s):", t_end_val, "\n")
+      cat("Default nadir event start time for PF (nadir - 0.2s):", t_start_val, "\n")
+      cat("Default nadir event end time for PF (nadir + 0.2s):", t_end_val, "\n")
       
     } else if (roi == 3) {
       cat(" (Pre-nadir ROI)\n")
-      t_start_val <- sensor_data$time[max(1, which(sensor_data$time == batch_summary$t_start_roi2[batch_summary$file == selected_sensor]) - num_rows / 3.2)]
+      t_start_val <- sensor_data$time[max(1, which(sensor_data$time == batch_summary$t_start_roi2[batch_summary$file == selected_sensor]) - num_rows / 1.92)]
       t_end_val <- sensor_data$time[which(sensor_data$time == batch_summary$t_start_roi2[batch_summary$file == selected_sensor])]
-      cat("Default start time for PF (nadir ROI start - 0.3s):", t_start_val, "\n")
+      cat("Default start time for PF (nadir ROI start - 0.5s):", t_start_val, "\n")
       cat("End time:", t_end_val, "\n")
       
     } else if (roi == 4) {
       cat(" (Post-nadir ROI)\n")
       t_start_val <- sensor_data$time[which(sensor_data$time == batch_summary$t_end_roi2[batch_summary$file == selected_sensor])]
-      t_end_val <- sensor_data$time[min(nrow(sensor_data), which(sensor_data$time == batch_summary$t_end_roi2[batch_summary$file == selected_sensor]) + num_rows /3.2)]
+      t_end_val <- sensor_data$time[min(nrow(sensor_data), which(sensor_data$time == batch_summary$t_end_roi2[batch_summary$file == selected_sensor]) + num_rows / 1.92)]
       cat("Start time:", t_start_val, "\n")
-      cat("Default end time for PF (nadir ROI end + 0.3s):", t_end_val, "\n")
+      cat("Default end time for PF (nadir ROI end + 0.5s):", t_end_val, "\n")
       
     } else if (roi == 5) {
       t_start_val <- batch_summary$t_start_roi1[batch_summary$file == selected_sensor]
@@ -1211,8 +1213,8 @@ find_acceleration_peaks <- function(data, batch_summary, selected_sensor,
   roi_end <- batch_summary$t_end_roi1[batch_summary$file == selected_sensor]
   data <- filter(data, long_id == selected_sensor, time >= roi_start, time <= roi_end)
   
-  cat("\nDebug: Processing sensor:", selected_sensor, "\n")
-  cat("Debug: ROI start:", roi_start, "ROI end:", roi_end, "\n\n")
+  #cat("\nDebug: Processing sensor:", selected_sensor, "\n")
+  #cat("Debug: ROI start:", roi_start, "ROI end:", roi_end, "\n\n")
   
   # Find initial peaks
   peaks <- findpeaks(data$accmag, minpeakheight = peak, minpeakdistance = peak_gap)
@@ -1226,9 +1228,9 @@ find_acceleration_peaks <- function(data, batch_summary, selected_sensor,
   peak_values <- data$accmag[peak_indices]
   peak_times <- data$time[peak_indices]
   
-  cat("Debug: Initial peaks found:", length(peak_indices), "\n")
-  cat("Debug: Peak times:", paste(peak_times, collapse = ", "), "\n")
-  cat("Debug: Peak values:", paste(peak_values, collapse = ", "), "\n\n")
+  #cat("Debug: Initial peaks found:", length(peak_indices), "\n")
+  #cat("Debug: Peak times:", paste(peak_times, collapse = ", "), "\n")
+  #cat("Debug: Peak values:", paste(peak_values, collapse = ", "), "\n\n")
   
   # Sort peaks by time
   sorted_order <- order(peak_times)
@@ -1236,31 +1238,31 @@ find_acceleration_peaks <- function(data, batch_summary, selected_sensor,
   peak_values <- peak_values[sorted_order]
   peak_times <- peak_times[sorted_order]
   
-  cat("Debug: Sorted peak times:", paste(peak_times, collapse = ", "), "\n")
-  cat("Debug: Sorted peak values:", paste(peak_values, collapse = ", "), "\n\n")
+  #cat("Debug: Sorted peak times:", paste(peak_times, collapse = ", "), "\n")
+  #cat("Debug: Sorted peak values:", paste(peak_values, collapse = ", "), "\n\n")
   
   valid_peaks <- numeric()
   
   if (length(peak_indices) > 1) {
     group_window <- peak_gap * group_window_multiplier
-    cat("Debug: New calculated group window:", group_window, "\n")
+    #cat("Debug: New calculated group window:", group_window, "\n")
     
     groups <- cumsum(c(1, diff(peak_indices) > group_window))
-    cat("Debug: Group assignments:", paste(groups, collapse = ", "), "\n\n")
+    #cat("Debug: Group assignments:", paste(groups, collapse = ", "), "\n\n")
     
     for (g in unique(groups)) {
       group_indices <- peak_indices[groups == g]
       group_values <- peak_values[groups == g]
       group_times <- peak_times[groups == g]
       
-      cat("\nDebug: Processing group", g, "\n")
-      cat("Debug: Group indices:", paste(group_indices, collapse = ", "), "\n")
-      cat("Debug: Group values:", paste(group_values, collapse = ", "), "\n")
-      cat("Debug: Group times:", paste(group_times, collapse = ", "), "\n")
+      #cat("\nDebug: Processing group", g, "\n")
+      #cat("Debug: Group indices:", paste(group_indices, collapse = ", "), "\n")
+      #cat("Debug: Group values:", paste(group_values, collapse = ", "), "\n")
+      #cat("Debug: Group times:", paste(group_times, collapse = ", "), "\n")
       
       if (length(group_indices) == 1) {
         valid_peaks <- c(valid_peaks, group_indices)
-        cat("Debug: Single peak in group, keeping it:", group_values, "\n")
+        #cat("Debug: Single peak in group, keeping it:", group_values, "\n")
       } else {
         # Check for drops between consecutive peaks
         drops <- sapply(1:(length(group_indices)-1), function(i) {
@@ -1269,8 +1271,8 @@ find_acceleration_peaks <- function(data, batch_summary, selected_sensor,
           any(drop_runs$lengths[drop_runs$values] >= drop_gap)
         })
         
-        cat("Debug: Drops detected at positions:", paste(which(drops), collapse = ", "), "\n")
-        cat("Debug: Drop values:", paste(drops, collapse = ", "), "\n")
+        #cat("Debug: Drops detected at positions:", paste(which(drops), collapse = ", "), "\n")
+        #cat("Debug: Drop values:", paste(drops, collapse = ", "), "\n")
         
         if (any(drops)) {
           # Find highest peak before first drop
@@ -1279,42 +1281,42 @@ find_acceleration_peaks <- function(data, batch_summary, selected_sensor,
           first_section_peak_idx <- which.max(group_values[1:first_section_end])
           valid_peaks_in_group <- c(group_indices[first_section_peak_idx])
           
-          cat("\nDebug: Keeping highest peak before drop:", 
-              group_values[first_section_peak_idx], 
-              "at time", group_times[first_section_peak_idx], "\n")
+          #cat("\nDebug: Keeping highest peak before drop:", 
+          #    group_values[first_section_peak_idx], 
+          #    "at time", group_times[first_section_peak_idx], "\n")
           
           # For each drop, find the highest peak between this drop and the next
           for (i in seq_along(drop_points)) {
             start_idx <- drop_points[i] + 1
             end_idx <- if (i == length(drop_points)) length(group_indices) else drop_points[i + 1]
             
-            cat("\nDebug: Processing drop point", i, "\n")
-            cat("Debug: Looking at peaks from index", start_idx, "to", end_idx, "\n")
-            cat("Debug: Values in range:", paste(group_values[start_idx:end_idx], collapse = ", "), "\n")
+            #cat("\nDebug: Processing drop point", i, "\n")
+            #cat("Debug: Looking at peaks from index", start_idx, "to", end_idx, "\n")
+            #cat("Debug: Values in range:", paste(group_values[start_idx:end_idx], collapse = ", "), "\n")
             
             peak_values_in_range <- group_values[start_idx:end_idx]
             max_idx_in_range <- which.max(peak_values_in_range) + start_idx - 1
             valid_peaks_in_group <- c(valid_peaks_in_group, group_indices[max_idx_in_range])
             
-            cat("Debug: Selected highest peak in range:", group_values[max_idx_in_range], 
-                "at time", group_times[max_idx_in_range], "\n")
+            #cat("Debug: Selected highest peak in range:", group_values[max_idx_in_range], 
+            #    "at time", group_times[max_idx_in_range], "\n")
           }
           
           valid_peaks <- c(valid_peaks, valid_peaks_in_group)
-          cat("\nDebug: Final peaks kept in group after drops:", 
-              paste(data$accmag[valid_peaks_in_group], collapse = ", "), "\n")
-          cat("Debug: At times:", paste(data$time[valid_peaks_in_group], collapse = ", "), "\n")
+          #cat("\nDebug: Final peaks kept in group after drops:", 
+          #    paste(data$accmag[valid_peaks_in_group], collapse = ", "), "\n")
+          #cat("Debug: At times:", paste(data$time[valid_peaks_in_group], collapse = ", "), "\n")
         } else {
           highest_peak <- group_indices[which.max(group_values)]
           valid_peaks <- c(valid_peaks, highest_peak)
-          cat("Debug: No drops, keeping only the highest peak:", 
-              data$accmag[highest_peak], "at time", data$time[highest_peak], "\n")
+          #cat("Debug: No drops, keeping only the highest peak:", 
+          #    data$accmag[highest_peak], "at time", data$time[highest_peak], "\n")
         }
       }
     }
   } else {
     valid_peaks <- peak_indices
-    cat("\nDebug: Only one peak found, keeping it\n")
+    #cat("\nDebug: Only one peak found, keeping it\n")
   }
   
   # Update batch_summary with peak values
@@ -1322,10 +1324,10 @@ find_acceleration_peaks <- function(data, batch_summary, selected_sensor,
   peak_times <- data$time[valid_peaks]
   peak_pres <- data$pres[valid_peaks]
   
-  cat("\nDebug: Final Results:\n")
-  cat("Debug: Total peaks kept:", length(valid_peaks), "\n")
-  cat("Debug: Final peak values:", paste(peak_values, collapse = ", "), "\n")
-  cat("Debug: Final peak times:", paste(peak_times, collapse = ", "), "\n")
+  #cat("\nDebug: Final Results:\n")
+  #cat("Debug: Total peaks kept:", length(valid_peaks), "\n")
+  #cat("Debug: Final peak values:", paste(peak_values, collapse = ", "), "\n")
+  #cat("Debug: Final peak times:", paste(peak_times, collapse = ", "), "\n")
   
   for (i in seq_along(peak_values)) {
     accmag_col <- paste0("accmag_", i)
